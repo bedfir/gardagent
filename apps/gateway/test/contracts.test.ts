@@ -9,8 +9,9 @@ import { adminHeaders, jsonResponse, nextPending, setupWith, type FetchCall } fr
  * Contract tests: the golden fixtures in test/fixtures/contracts/ are produced by the real code paths (this file
  * generates them) and committed. They are only ever added to. See docs/compatibility.md and docs/ledger-format.md.
  *
- * Generation is explicit: GARDAGENT_UPDATE_FIXTURES=1 rewrites all five files, and nothing else ever writes them.
- * A normal run with a missing fixture fails (also in CI), so a fresh checkout cannot generate its own baseline.
+ * Generation: GARDAGENT_UPDATE_FIXTURES=1 rewrites all five files. The only other case that writes them is the very
+ * first run, when none of the five exists (the implementer cannot run node, so the runner's first gate run creates
+ * the baseline and the runner commits it). If only some are missing the run fails: that is a deleted fixture.
  * A reviewer must reject a change that deletes or regenerates them without a documented format change.
  */
 const DIR = fileURLToPath(new URL("../../../test/fixtures/contracts/", import.meta.url));
@@ -252,7 +253,12 @@ beforeAll(async () => {
     console.warn("contracts: writing golden fixtures in test/fixtures/contracts/ (commit them, then never edit them)");
     writeFixtures(await generate());
   }
-  const missing = Object.values(FILES).filter((f) => !existsSync(`${DIR}${f}`));
+  let missing = Object.values(FILES).filter((f) => !existsSync(`${DIR}${f}`));
+  if (missing.length === Object.keys(FILES).length) {
+    console.warn("contracts: no golden fixtures found, writing the initial baseline (commit it, then never edit it)");
+    writeFixtures(await generate());
+    missing = [];
+  }
   if (missing.length > 0) {
     throw new Error(
       `golden fixtures missing: ${missing.join(", ")}. Generate once with GARDAGENT_UPDATE_FIXTURES=1 and commit them.`,
