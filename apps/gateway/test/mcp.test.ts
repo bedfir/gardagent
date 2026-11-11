@@ -1,9 +1,10 @@
+import { randomUUID } from "node:crypto";
 import pg from "pg";
 import { describe, expect, it } from "vitest";
 import { canonicalJson, sha256 } from "@gardagent/core";
 import { parseMcpServers } from "../src/config.js";
 import { PgStore } from "../src/pg-store.js";
-import { adminHeaders, createAgent, jsonResponse, proxyLedger, setupWith, sseResponse } from "./helpers.js";
+import { adminHeaders, nextPending, createAgent, jsonResponse, proxyLedger, setupWith, sseResponse } from "./helpers.js";
 
 const servers = { gh: { url: "https://mcp.test/gh", headers: { authorization: "Bearer SECRET-MCP", "x-secret": "s3" }, readTools: ["search"] } };
 const mixedServers = {
@@ -203,12 +204,8 @@ describe("mcp: read/write classification", () => {
   it("write tool requires approval even when approvalTools is empty", async () => {
     const { app, store, calls } = makeMixed();
     const { key } = await createAgent(app, { name: "bot", allowedModels: ["*"], allowedTools: ["erp/*"], approvalTools: [], dailyBudgetUsd: 0, unlimited: true });
-    const pending = post(app, key, call("update_work_order"), {}, "erp");
-    for (let i = 0; i < 200; i++) {
-      if ((await store.listApprovals({ status: "pending" })).length > 0) break;
-      await new Promise((r) => setTimeout(r, 10));
-    }
-    const [approval] = await store.listApprovals({ status: "pending" });
+    const pending = post(app, key, call("update_work_order"), {}, "erp").then((response) => response);
+    const approval = await nextPending(store);
     expect(approval).toMatchObject({ server: "erp", tool: "update_work_order", accessClass: "write" });
     expect(calls).toHaveLength(0);
     await store.decideApproval(approval.id, "approved", null, new Date().toISOString());
@@ -230,13 +227,10 @@ describe("mcp: read/write classification", () => {
   it("missing readTools means every tool is write", async () => {
     const { app, store } = setupWith({ mcpServers: { gh: { url: "https://mcp.test/gh", headers: {} } } }, () => jsonResponse(ok));
     const { key } = await createAgent(app, { name: "bot", allowedModels: ["*"], allowedTools: ["gh/*"], approvalTools: [], dailyBudgetUsd: 0, unlimited: true });
-    const pending = post(app, key, call("search"));
-    for (let i = 0; i < 200; i++) {
-      if ((await store.listApprovals({ status: "pending" })).length > 0) break;
-      await new Promise((r) => setTimeout(r, 10));
-    }
-    expect((await store.listApprovals({ status: "pending" }))[0]).toMatchObject({ server: "gh", tool: "search", accessClass: "write" });
-    await store.decideApproval((await store.listApprovals({ status: "pending" }))[0].id, "approved", null, new Date().toISOString());
+    const pending = post(app, key, call("search")).then((response) => response);
+    const approval = await nextPending(store);
+    expect(approval).toMatchObject({ server: "gh", tool: "search", accessClass: "write" });
+    await store.decideApproval(approval.id, "approved", null, new Date().toISOString());
     await pending;
   });
 
@@ -274,27 +268,40 @@ describe("mcp: read/write classification", () => {
 const dbUrl = process.env.TEST_DATABASE_URL;
 describe.skipIf(!dbUrl)("mcp: PostgreSQL migration", () => {
   it("adds allowed_tools to an existing agents table, idempotently", async () => {
-    const admin = new pg.Pool({ connectionString: dbUrl, max: 1 });
-    await admin.query("DROP SCHEMA IF EXISTS ga_mcp CASCADE");
-    await admin.query("CREATE SCHEMA ga_mcp");
-    await admin.end();
-    const pool = new pg.Pool({ connectionString: dbUrl, options: "-c search_path=ga_mcp" });
-    try {
-      await pool.query(`CREATE TABLE agents (id TEXT PRIMARY KEY, name TEXT NOT NULL, key_hash TEXT NOT NULL UNIQUE,
-        allowed_models TEXT[] NOT NULL, daily_budget BIGINT NOT NULL DEFAULT 0, active BOOLEAN NOT NULL DEFAULT TRUE,
-        created_at TIMESTAMPTZ NOT NULL DEFAULT now())`);
-      await pool.query("INSERT INTO agents (id, name, key_hash, allowed_models) VALUES ('old', 'ancien', 'h', '{a}')");
-      const store = new PgStore(pool);
-      await store.migrate();
-      await store.migrate();
-      expect((await store.getAgent("old"))!.allowedTools).toEqual([]);
-      await store.updateAgent("old", { allowedTools: ["gh/*"] });
-      await store.migrate();
-      expect((await store.getAgent("old"))!.allowedTools).toEqual(["gh/*"]);
-      const { rows } = await pool.query("SELECT column_default, is_nullable FROM information_schema.columns WHERE table_schema='ga_mcp' AND table_name='agents' AND column_name='allowed_tools'");
-      expect(rows[0]).toMatchObject({ is_nullable: "NO" });
-    } finally {
-      await pool.end();
+    // Concurrent fixtures also cover overlapping invocations against the same database.
+    const migrateFixture = async (allowedTool: string) => {
+      const schema = `ga_mcp_${randomUUID().replaceAll("-", "")}`;
+      const admin = new pg.Pool({ connectionString: dbUrl, max: 1 });
+      const pool = new pg.Pool({ connectionString: dbUrl, options: `-c search_path=${schema}` });
+      try {
+        // Completion of CREATE SCHEMA is the readiness signal; no timing delay.
+        await admin.query(`CREATE SCHEMA "${schema}"`);
+        await pool.query(`CREATE TABLE agents (id TEXT PRIMARY KEY, name TEXT NOT NULL, key_hash TEXT NOT NULL UNIQUE,
+          allowed_models TEXT[] NOT NULL, daily_budget BIGINT NOT NULL DEFAULT 0, active BOOLEAN NOT NULL DEFAULT TRUE,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT now())`);
+        await pool.query("INSERT INTO agents (id, name, key_hash, allowed_models) VALUES ('old', 'ancien', 'h', '{a}')");
+        const store = new PgStore(pool);
+        await store.migrate();
+        await store.migrate();
+        expect((await store.getAgent("old"))!.allowedTools).toEqual([]);
+        await store.updateAgent("old", { allowedTools: [allowedTool] });
+        await store.migrate();
+        expect((await store.getAgent("old"))!.allowedTools).toEqual([allowedTool]);
+        const { rows } = await pool.query("SELECT column_default, is_nullable FROM information_schema.columns WHERE table_schema=$1 AND table_name='agents' AND column_name='allowed_tools'", [schema]);
+        expect(rows[0]).toMatchObject({ is_nullable: "NO" });
+      } finally {
+        try {
+          await pool.end();
+        } finally {
+          try { await admin.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`); }
+          finally { await admin.end(); }
+        }
+      }
+    };
+    // Wait for both cleanups even if one fixture fails.
+    const results = await Promise.allSettled([migrateFixture("gh/*"), migrateFixture("erp/*")]);
+    for (const result of results) {
+      if (result.status === "rejected") throw result.reason;
     }
   });
 });

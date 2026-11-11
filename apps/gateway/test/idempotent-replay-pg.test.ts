@@ -3,7 +3,7 @@ import { existsSync, mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import pg from "pg";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { verifyChain, type Agent, type LedgerInput } from "@gardagent/core";
 import { LedgerGuard } from "../src/ledger-guard.js";
 import { PgStore } from "../src/pg-store.js";
@@ -28,8 +28,6 @@ const input = (n: number, over: Partial<LedgerInput> = {}): LedgerInput => ({
   responseHash: `s${n}`,
   ...over,
 });
-
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 describe.skipIf(!url)("idempotent ledger append and settlement (PostgreSQL)", () => {
   let pool: pg.Pool;
@@ -107,6 +105,14 @@ describe.skipIf(!url)("idempotent ledger append and settlement (PostgreSQL)", ()
     agentId = await newAgent();
     const path = join(mkdtempSync(join(tmpdir(), "ga-replay-pg-")), "spool", "ledger.jsonl");
     const guard = new LedgerGuard(store, quiet, { spoolPath: path, retryDelaysMs: [1], callTimeoutMs: 80, probeTimeoutMs: 500 });
+    const append = store.appendLedger.bind(store);
+    const attempts: Array<Promise<unknown>> = [];
+    const spy = vi.spyOn(store, "appendLedger").mockImplementation((...args) => {
+      const attempt = append(...args);
+      // Observe rejection immediately even if the guard has already timed out.
+      attempts.push(attempt.catch(() => undefined));
+      return attempt;
+    });
     const holder = await pool.connect();
     await holder.query("SELECT pg_advisory_lock($1)", [LEDGER_LOCK]); // a slow writer: the append waits behind it
     try {
@@ -116,7 +122,9 @@ describe.skipIf(!url)("idempotent ledger append and settlement (PostgreSQL)", ()
       holder.release();
     }
     expect(guard.spoolBacklog()).toBe(1);
-    await sleep(200); // the abandoned attempt gets the lock, sees the aborted signal and rolls back
+    // Await actual rollback/completion after releasing the lock, rather than guessing its duration.
+    try { await Promise.all(attempts); }
+    finally { spy.mockRestore(); }
     expect(await rows()).toHaveLength(0);
     expect(await guard.probe()).toBe(true);
     expect(await guard.replay()).toBe(1);

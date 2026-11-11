@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { canonicalJson, sha256, summarizeArgs, verifyChain } from "@gardagent/core";
-import { adminHeaders, createAgent, jsonResponse, setupWith } from "./helpers.js";
+import { adminHeaders, nextPending, createAgent, jsonResponse, setupWith } from "./helpers.js";
 
 const servers = { gh: { url: "https://mcp.test/gh", headers: {} } };
 const mixedServers = { erp: { url: "https://mcp.test/erp", headers: {}, readTools: ["read_work_order"] } };
@@ -26,14 +26,6 @@ const postTo = (app: Ctx["app"], key: string, server: string, payload: unknown) 
 const decide = (app: Ctx["app"], id: string, action: "approve" | "reject", payload: object = {}) =>
   app.inject({ method: "POST", url: `/admin/approvals/${id}/${action}`, headers: adminHeaders, payload });
 
-async function nextPending(store: Ctx["store"]) {
-  for (let i = 0; i < 200; i++) {
-    const [a] = await store.listApprovals({ status: "pending" });
-    if (a) return a;
-    await new Promise((r) => setTimeout(r, 10));
-  }
-  throw new Error("no pending approval request");
-}
 const ledgerActions = async (store: Ctx["store"]) =>
   (await store.listLedger()).filter((e) => !e.action.startsWith("admin.")).map((e) => `${e.action}:${e.verdict}:${e.reason}`);
 
@@ -41,11 +33,10 @@ describe("human validation: MCP tools", () => {
   it("approved: no call before the decision, then normal relay", async () => {
     const { app, store, calls } = make();
     const { agent, key } = await agentWith(app, ["gh/delete"]);
-    const pending = post(app, key, call("delete"));
+    const pending = post(app, key, call("delete")).then((response) => response);
     const approval = await nextPending(store);
     expect(approval).toMatchObject({ agentId: agent.id, server: "gh", tool: "delete", status: "pending", argsHash: sha256(canonicalJson({ path: "/secret-chemin", token: "mot-sensible" })) });
     expect(approval.argsSummary).toContain("/secret-chemin");
-    await new Promise((r) => setTimeout(r, 60));
     expect(calls).toHaveLength(0);
 
     const res = await decide(app, approval.id, "approve");
@@ -71,7 +62,7 @@ describe("human validation: MCP tools", () => {
   it("rejected: error -32002 with kept reason, no call", async () => {
     const { app, store, calls } = make();
     const { key } = await agentWith(app, ["gh/*"]);
-    const pending = post(app, key, call("delete"));
+    const pending = post(app, key, call("delete")).then((response) => response);
     const approval = await nextPending(store);
     expect((await decide(app, approval.id, "reject", { reason: "too risky" })).statusCode).toBe(200);
     const out = await pending;
@@ -109,12 +100,8 @@ describe("human validation: MCP tools", () => {
   it("write tool requires approval even when not in approvalTools", async () => {
     const { app, store, calls } = make();
     const { key } = await createAgent(app, { name: "bot", allowedModels: ["*"], allowedTools: ["gh/*"], approvalTools: [], dailyBudgetUsd: 0, unlimited: true });
-    const pending = post(app, key, call("delete"));
-    for (let i = 0; i < 200; i++) {
-      if ((await store.listApprovals({ status: "pending" })).length > 0) break;
-      await new Promise((r) => setTimeout(r, 10));
-    }
-    const [approval] = await store.listApprovals({ status: "pending" });
+    const pending = post(app, key, call("delete")).then((response) => response);
+    const approval = await nextPending(store);
     expect(approval).toMatchObject({ server: "gh", tool: "delete", accessClass: "write" });
     expect(calls).toHaveLength(0);
     await store.decideApproval(approval.id, "approved", null, new Date().toISOString());
@@ -133,7 +120,7 @@ describe("human validation: MCP tools", () => {
   it("double decision: 409; unknown request: 404; token required", async () => {
     const { app, store } = make();
     const { key } = await agentWith(app, ["gh/*"]);
-    const pending = post(app, key, call("delete"));
+    const pending = post(app, key, call("delete")).then((response) => response);
     const approval = await nextPending(store);
     expect((await decide(app, approval.id, "approve")).statusCode).toBe(200);
     expect((await decide(app, approval.id, "approve")).statusCode).toBe(409);
@@ -147,7 +134,7 @@ describe("human validation: MCP tools", () => {
   it("decision from another instance (store only): detected by polling", async () => {
     const { app, store, calls } = make();
     const { key } = await agentWith(app, ["gh/*"]);
-    const pending = post(app, key, call("delete"));
+    const pending = post(app, key, call("delete")).then((response) => response);
     const approval = await nextPending(store);
     await store.decideApproval(approval.id, "approved", null, new Date().toISOString());
     expect((await pending).json()).toEqual(ok);

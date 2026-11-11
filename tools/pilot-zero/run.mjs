@@ -5,6 +5,7 @@ import { createHash } from "node:crypto";
 import http from "node:http";
 import { writeFileSync } from "node:fs";
 import { pairForCriterionC, streamVerdict } from "./pairing.mjs";
+import { transportCause, gatewayErrorCode, failureBreakdown, restartInvariants } from "./restart.mjs";
 
 const E = process.env;
 const need = (n) => {
@@ -131,16 +132,18 @@ async function viaGateway(agent, body, group = "main") {
   sent.push(rec);
   const t0 = performance.now();
   try {
-    const r = await fetch(GW + "/v1/chat/completions", { method: "POST", headers: { authorization: `Bearer ${agent.key}`, "content-type": "application/json", "x-opencode-session": SESSION }, body: JSON.stringify(body) });
-    const text = await r.text();
+    const r = await fetch(GW + "/v1/chat/completions", { method: "POST", headers: { authorization: `Bearer ${agent.key}`, "content-type": "application/json", "x-opencode-session": SESSION }, body: JSON.stringify(body), ...(group === "chaos" ? { signal: AbortSignal.timeout(120000) } : {}) });
     rec.status = r.status;
+    const text = await r.text();
     rec.ms = performance.now() - t0;
     const p = parseBody(r.status, text, body.stream === true);
     rec.model = body.model;
     rec.usage = p.usage;
+    if (r.status !== 200) rec.gatewayCode = gatewayErrorCode(text);
     return { ...p, ms: rec.ms, rec };
   } catch (e) {
-    rec.error = String(e.cause?.code ?? e.message);
+    rec.failure = transportCause(e);
+    rec.error = rec.failure;
     return { status: 0, error: rec.error, rec };
   }
 }
@@ -164,6 +167,44 @@ function dockerPost(path) {
     r.on("error", reject);
     r.end();
   });
+}
+// Read raw rows: getReserved intentionally excludes expired reservations.
+async function dockerRequest(path, body) {
+  return new Promise((resolve, reject) => {
+    const r = http.request({ socketPath: "/var/run/docker.sock", path, method: "POST",
+      headers: { "content-type": "application/json" } }, (response) => {
+      const chunks = [];
+      response.on("data", (chunk) => chunks.push(chunk));
+      response.on("error", reject);
+      response.on("end", () => {
+        if (response.statusCode !== 200 && response.statusCode !== 201) return reject(new Error("Docker request failed"));
+        resolve(Buffer.concat(chunks));
+      });
+    });
+    r.setTimeout(15000, () => r.destroy(new Error("Docker request timeout")));
+    r.on("error", reject);
+    r.end(JSON.stringify(body));
+  });
+}
+async function restartAccounting(agentId) {
+  if (!/^[a-zA-Z0-9-]+$/.test(agentId)) throw new Error("Invalid restart agent ID");
+  const sql = `SELECT json_build_object('reservations', (SELECT count(*) FROM agent_reservations WHERE agent_id='${agentId}'), 'spendMicro', (SELECT COALESCE(sum(amount),0) FROM agent_spend WHERE agent_id='${agentId}'));`;
+  const exec = JSON.parse((await dockerRequest(`/containers/${PG_CONTAINER}/exec`, {
+    AttachStdout: true, AttachStderr: true,
+    Cmd: ["sh", "-c", 'exec psql -X -A -t -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "$1"', "psql", sql],
+  })).toString());
+  const raw = await dockerRequest(`/exec/${exec.Id}/start`, { Detach: false, Tty: false });
+  const stdout = [];
+  // Docker non-TTY output consists of eight-byte frame headers and payloads.
+  for (let offset = 0; offset < raw.length;) {
+    if (offset + 8 > raw.length) throw new Error("Truncated Docker frame");
+    const length = raw.readUInt32BE(offset + 4);
+    if (offset + 8 + length > raw.length) throw new Error("Truncated Docker payload");
+    if (raw[offset] === 1) stdout.push(raw.subarray(offset + 8, offset + 8 + length));
+    else throw new Error("PostgreSQL diagnostic failed");
+    offset += 8 + length;
+  }
+  return JSON.parse(Buffer.concat(stdout).toString().trim());
 }
 async function waitUntil(fn, ms = 90000) {
   const t0 = Date.now();
@@ -311,17 +352,25 @@ if (want("g")) {
   stop = true;
   await Promise.all(workers);
   await sleep(2000);
-  const rows = await ledgerAfter(ledgerAgentSeqStart);
-  const have = new Map();
-  for (const e of rows.filter((e) => e.agentId === chaos.id && e.action === "chat.completions")) have.set(e.requestHash, (have.get(e.requestHash) ?? 0) + 1);
   const mine = sent.filter((s) => s.group === "chaos");
-  const acked = mine.filter((s) => s.status === 200);
-  const missing = acked.filter((s) => { const c = have.get(s.hash) ?? 0; if (c > 0) { have.set(s.hash, c - 1); return false; } return true; });
-  const failedConn = mine.filter((s) => s.status === 0).length;
-  const failedHttp = mine.filter((s) => s.status !== 0 && s.status !== 200).length;
-  const v = await verify();
-  record("g", missing.length === 0 && v.valid === true && acked.length > 0 && recovered !== null,
-    `${events.join("; ")}; requests=${mine.length}, acknowledged(200)=${acked.length}, missing from ledger=${missing.length}, connection failures (never acknowledged)=${failedConn}, other HTTP errors=${failedHttp}, chain valid=${v.valid} (${v.checked} entries)`);
+  const failures = failureBreakdown(mine);
+  let accounting;
+  let rows = [];
+  let v = { valid: false };
+  const observationErrors = [];
+  try { accounting = await restartAccounting(chaos.id); }
+  catch { observationErrors.push("restart accounting query failed"); }
+  try { rows = await ledgerAfter(ledgerAgentSeqStart); }
+  catch { observationErrors.push("restart ledger read failed"); }
+  try { v = await verify(); }
+  catch { observationErrors.push("restart chain verification failed"); }
+  const invariants = restartInvariants(mine, rows, chaos.id, v.valid, accounting);
+  const diagnostics = { failures, invariants, observationErrors };
+  record("g", invariants.pass && observationErrors.length === 0 && recovered !== null,
+    `${events.join("; ")}; requests=${mine.length}; diagnostics=${JSON.stringify(diagnostics)}`);
+  results.g.diagnostics = diagnostics;
+  // Persist restart evidence even if a later criterion cannot finish.
+  if (E.RESULTS_FILE) writeFileSync(E.RESULTS_FILE, JSON.stringify({ startedAt, results }, null, 2));
   chain.push({ label: "chaos", valid: v.valid === true, checked: v.checked });
 }
 
@@ -402,7 +451,7 @@ if (want("abc") || want("e")) {
   const rows = (await ledgerAfter(startSeq)).filter((e) => e.action === "chat.completions");
   const have = new Map();
   for (const e of rows) { const k = `${e.agentId}|${e.requestHash}`; have.set(k, (have.get(k) ?? 0) + 1); }
-  const answered = sent.filter((s) => s.status !== 0 && s.group !== "chaos");
+  const answered = sent.filter((s) => s.status !== 0 && !s.failure && s.group !== "chaos");
   const missing = answered.filter((s) => { const k = `${s.agentId}|${s.hash}`; const c = have.get(k) ?? 0; if (c > 0) { have.set(k, c - 1); return false; } return true; });
   record("b", missing.length === 0 && answered.length > 0, `${answered.length} gateway requests answered, ${missing.length} missing from ledger`);
 

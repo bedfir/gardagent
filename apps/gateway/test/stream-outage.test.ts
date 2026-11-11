@@ -68,15 +68,18 @@ function liveStream(kind: "openai" | "anthropic", onFreeze: () => void): Respons
       ? [sse("message_delta", { type: "message_delta", delta: { stop_reason: "end_turn" }, usage: { output_tokens: 3 } }), sse("message_stop", { type: "message_stop" })]
       : [sse(null, { id: "s", choices: [], usage: { prompt_tokens: 7, completion_tokens: 3 } }), "data: [DONE]\n\n"];
   const stream = new ReadableStream<Uint8Array>({
-    async start(controller) {
-      for (const c of head) controller.enqueue(enc.encode(c));
-      await new Promise((r) => setTimeout(r, 60));
-      onFreeze(); // the database goes away while the stream is in flight
-      await new Promise((r) => setTimeout(r, 60));
+    // Each pull is observable demand from the gateway's stream reader.
+    // Freeze only after it has consumed the head; deliver the tail on its next read.
+    pull(controller) {
+      if (head.length) {
+        controller.enqueue(enc.encode(head.shift()!));
+        return;
+      }
+      onFreeze();
       for (const c of tail) controller.enqueue(enc.encode(c));
       controller.close();
     },
-  });
+  }, { highWaterMark: 0 });
   return new Response(stream, { status: 200, headers: { "content-type": "text/event-stream" } });
 }
 
@@ -121,7 +124,7 @@ describe.each([["fail-open" as Policy], ["fail-closed" as Policy]])("stream in f
       const elapsed = Date.now() - started;
       expect(res.statusCode).toBe(200);
       expect(res.body).toContain(kind === "openai" ? "[DONE]" : "message_stop");
-      // ~120 ms of stream + one bounded settlement. Before the fix this call never returned (frozen driver) or waited 3 x 5 s.
+      // Stream consumption plus one bounded settlement. Before the fix this call never returned (frozen driver) or waited 3 x 5 s.
       expect(elapsed).toBeLessThan(120 + CALL_TIMEOUT_MS + 500);
       expect(guard.dbKnownDown()).toBe(true);
       const rows = spooled();
