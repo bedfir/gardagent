@@ -61,3 +61,5 @@ Result: 9 of 9 criteria in one uninterrupted run. Cleanup: the harness deactivat
 * Anthropic-format endpoint (`/v1/messages`) against the real Anthropic API was not exercised in this run.
 * The 29 "other HTTP errors" of criterion (g) were not broken down in this run (earlier rounds attributed them to 503 answers during
   the restarts).
+
+The 29 unclassified errors from this run cannot be reconstructed; the harness now classifies restart failures by transport cause, HTTP status, and gateway error code.

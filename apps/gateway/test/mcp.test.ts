@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { canonicalJson, sha256 } from "@gardagent/core";
 import { parseMcpServers } from "../src/config.js";
 import { PgStore } from "../src/pg-store.js";
-import { adminHeaders, createAgent, jsonResponse, proxyLedger, setupWith, sseResponse } from "./helpers.js";
+import { adminHeaders, nextPending, createAgent, jsonResponse, proxyLedger, setupWith, sseResponse } from "./helpers.js";
 
 const servers = { gh: { url: "https://mcp.test/gh", headers: { authorization: "Bearer SECRET-MCP", "x-secret": "s3" }, readTools: ["search"] } };
 const mixedServers = {
@@ -203,12 +203,8 @@ describe("mcp: read/write classification", () => {
   it("write tool requires approval even when approvalTools is empty", async () => {
     const { app, store, calls } = makeMixed();
     const { key } = await createAgent(app, { name: "bot", allowedModels: ["*"], allowedTools: ["erp/*"], approvalTools: [], dailyBudgetUsd: 0, unlimited: true });
-    const pending = post(app, key, call("update_work_order"), {}, "erp");
-    for (let i = 0; i < 200; i++) {
-      if ((await store.listApprovals({ status: "pending" })).length > 0) break;
-      await new Promise((r) => setTimeout(r, 10));
-    }
-    const [approval] = await store.listApprovals({ status: "pending" });
+    const pending = post(app, key, call("update_work_order"), {}, "erp").then((response) => response);
+    const approval = await nextPending(store);
     expect(approval).toMatchObject({ server: "erp", tool: "update_work_order", accessClass: "write" });
     expect(calls).toHaveLength(0);
     await store.decideApproval(approval.id, "approved", null, new Date().toISOString());
@@ -230,13 +226,10 @@ describe("mcp: read/write classification", () => {
   it("missing readTools means every tool is write", async () => {
     const { app, store } = setupWith({ mcpServers: { gh: { url: "https://mcp.test/gh", headers: {} } } }, () => jsonResponse(ok));
     const { key } = await createAgent(app, { name: "bot", allowedModels: ["*"], allowedTools: ["gh/*"], approvalTools: [], dailyBudgetUsd: 0, unlimited: true });
-    const pending = post(app, key, call("search"));
-    for (let i = 0; i < 200; i++) {
-      if ((await store.listApprovals({ status: "pending" })).length > 0) break;
-      await new Promise((r) => setTimeout(r, 10));
-    }
-    expect((await store.listApprovals({ status: "pending" }))[0]).toMatchObject({ server: "gh", tool: "search", accessClass: "write" });
-    await store.decideApproval((await store.listApprovals({ status: "pending" }))[0].id, "approved", null, new Date().toISOString());
+    const pending = post(app, key, call("search")).then((response) => response);
+    const approval = await nextPending(store);
+    expect(approval).toMatchObject({ server: "gh", tool: "search", accessClass: "write" });
+    await store.decideApproval(approval.id, "approved", null, new Date().toISOString());
     await pending;
   });
 

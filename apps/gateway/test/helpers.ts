@@ -57,7 +57,7 @@ export function sseResponse(chunks: string[]): Response {
     async start(controller) {
       for (const c of chunks) {
         controller.enqueue(enc.encode(c));
-        await new Promise((r) => setTimeout(r, 1));
+        await new Promise<void>((resolve) => setImmediate(resolve));
       }
       controller.close();
     },
@@ -81,14 +81,25 @@ export async function createAgent(
   return res.json() as { agent: { id: string }; key: string };
 }
 
+/** Yield to I/O until observable state is ready; the deadline only bounds failures. */
+export async function waitUntil<T>(read: () => T | Promise<T>, ready: (value: T) => boolean, timeoutMs = 3000): Promise<T> {
+  const deadline = Date.now() + timeoutMs;
+  do {
+    const value = await read();
+    if (ready(value)) return value;
+    await new Promise<void>((resolve) => setImmediate(resolve));
+  } while (Date.now() < deadline);
+  throw new Error("Observable test state was not reached before the deadline");
+}
+
 /** The ledger of a streaming request is written right after the stream closes. */
 export async function waitForLedger(store: MemoryStore, count: number) {
-  for (let i = 0; i < 100; i++) {
-    const rows = await proxyLedger(store);
-    if (rows.length >= count) return rows;
-    await new Promise((r) => setTimeout(r, 10));
-  }
-  return proxyLedger(store);
+  return waitUntil(() => proxyLedger(store), (rows) => rows.length >= count);
+}
+
+export async function nextPending(store: MemoryStore) {
+  const rows = await waitUntil(() => store.listApprovals({ status: "pending" }), (rows) => rows.length > 0);
+  return rows[0]!;
 }
 
 /** Same gateway with a modified configuration (e.g. forwarded header list). */

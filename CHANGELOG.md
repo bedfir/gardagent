@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Pilot-zero restart validation now reports failure causes and checks ledger coverage, orphan reservations, and spend consistency.
+- Gateway tests synchronize on observable state instead of short fixed delays.
+
 ## [0.3.0] - 2026-11-11
 
 ### Upgrade notes (behavior changes)
