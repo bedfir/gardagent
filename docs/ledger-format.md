@@ -28,7 +28,7 @@ An entry is a JSON object. These fields are always present, with exactly these n
 | `promptTokens` | integer | Tokens counted as input (0 when unknown). |
 | `completionTokens` | integer | Tokens counted as output (0 when unknown). |
 | `cost` | integer | Cost in micro-USD (1 USD = 1 000 000). Never a fraction. |
-| `requestHash` | string or `null` | SHA-256 (hex) of the canonical JSON of the request body (MCP: of `params.arguments ?? {}`). Proves what was sent without keeping it. |
+| `requestHash` | string or `null` | SHA-256 (hex) of the canonical JSON of the request body for the model endpoints; for MCP `tools/call` and approval rows, of `params.arguments ?? {}`; for other MCP methods (from M08), of `params ?? {}`; for admin rows, of the event content the gateway built for that action (`auditInput`), which is not necessarily the HTTP request body. It lets the holder of the original content confirm it matches, without the ledger keeping it; it does not prove what an HTTP client sent. |
 | `responseHash` | string or `null` | SHA-256 (hex) of the response text relayed to the client; `null` when empty. |
 
 One optional field exists:

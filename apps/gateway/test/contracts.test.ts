@@ -9,8 +9,9 @@ import { adminHeaders, jsonResponse, nextPending, setupWith, type FetchCall } fr
  * Contract tests: the golden fixtures in test/fixtures/contracts/ are produced by the real code paths (this file
  * generates them) and committed. They are only ever added to. See docs/compatibility.md and docs/ledger-format.md.
  *
- * Regenerate with GARDAGENT_UPDATE_FIXTURES=1 only for a new fixture set; a file that already exists is otherwise
- * never rewritten, and a missing file is generated once (the first run after the fixtures were introduced).
+ * Generation is explicit: GARDAGENT_UPDATE_FIXTURES=1 writes all five files (do it once, from the code that
+ * implements the format being frozen, and commit the result). Without it a missing fixture fails the test; nothing
+ * is ever regenerated implicitly, so a checkout cannot silently take the current implementation as its baseline.
  */
 const DIR = fileURLToPath(new URL("../../../test/fixtures/contracts/", import.meta.url));
 const FILES = {
@@ -234,10 +235,15 @@ const V1_FIELDS = [
 let ledger: Generated["ledger"];
 
 beforeAll(async () => {
-  const missing = Object.values(FILES).some((f) => !existsSync(`${DIR}${f}`));
-  if (missing || process.env.GARDAGENT_UPDATE_FIXTURES === "1") {
-    console.warn("contracts: generating golden fixtures in test/fixtures/contracts/ (commit them, then never edit them)");
+  if (process.env.GARDAGENT_UPDATE_FIXTURES === "1") {
+    console.warn("contracts: writing golden fixtures in test/fixtures/contracts/ (commit them, then never edit them)");
     writeFixtures(await generate());
+  }
+  const missing = Object.values(FILES).filter((f) => !existsSync(`${DIR}${f}`));
+  if (missing.length > 0) {
+    throw new Error(
+      `golden fixtures missing: ${missing.join(", ")}. Generate once with GARDAGENT_UPDATE_FIXTURES=1 and commit them.`,
+    );
   }
   ledger = readFixture<Generated["ledger"]>(FILES.ledger);
 }, 30_000);

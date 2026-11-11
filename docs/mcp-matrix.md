@@ -61,8 +61,8 @@ notification is still journaled.
 
 | Notification | Decision | Ledger row | Reason |
 | --- | --- | --- | --- |
-| `notifications/initialized` | Forwarded | None (covered by the `mcp.initialize` row of the session) | Required to complete the handshake; carries no data. |
-| `notifications/cancelled` | Forwarded | None | Lets an agent cancel a call of its own. Carries only a request id and a short reason. |
+| `notifications/initialized` | Governed: forwarded after admission (valid agent key, declared server, rate limit of M09, `params` absent or an object) | `mcp.notifications/initialized`, allowed, cost 0, `upstreamStatus` as returned upstream | Completes the handshake. It happens after, and independently of, the `mcp.initialize` row, which cannot record it; it is its own event. |
+| `notifications/cancelled` | Governed: forwarded after the same admission checks and `params` an object with a `requestId` | `mcp.notifications/cancelled`, allowed, cost 0, `upstreamStatus` as returned upstream | Cancelling changes the outcome of an operation, so it is journaled. Its `requestHash` covers `params`, hence the cancelled `requestId`. The row does not link itself to the cancelled call's row; the matching is by that id and the agent, which a reader can do from the hash of the call it knows. |
 | `notifications/progress` | Refused (202, not forwarded) | `mcp.notifications/progress`, denied, reason `method_not_governed` | Progress refers to a server-initiated request, which the proxy never relays. |
 | `notifications/roots/list_changed` | Refused | same | Roots are not supported (`roots/list` is refused below). |
 | Any other notification | Refused | `mcp.<method>`, denied, reason `method_not_governed` | Default deny. |
@@ -93,6 +93,12 @@ proxy limits that wait with the existing upstream timeout and ends the stream; t
 - In `observe` mode the proxy forwards what `enforce` mode would refuse, journaling the row with reason
   `observed:method_not_governed` (as `observed:tool_not_allowed` today). `observe` never turns a refusal of section 1
   (malformed or unsupported framing) into a forward.
-- Request bodies are never written into the ledger; only the `requestHash` of the canonical `params`.
+- Request bodies are never written into the ledger; only a `requestHash`. Its input depends on the row:
+  - `mcp.tools/call` and the approval rows (`mcp.approval.requested`, `mcp.approval.decided`): the canonical JSON of
+    `params.arguments ?? {}`, **unchanged from 0.3.0**. The approval is bound to this hash and the executed call must
+    produce the same value (`docs/mandate.md`, `docs/ledger-format.md`); M08 must not change it.
+  - Every other method or notification (`initialize`, `tools/list`, `notifications/*`, refusals): the canonical JSON
+    of `params ?? {}`. These rows have no approval, so no equality with another hash is at stake. The hash proves what
+    the client sent in `params`, not the method name, which the `action` field carries.
 - The matrix is tested by a table-driven test in M08: one case per row above, asserting the HTTP outcome, whether the
   upstream was called, and the ledger row.
