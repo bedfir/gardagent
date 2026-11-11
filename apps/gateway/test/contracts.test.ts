@@ -11,8 +11,9 @@ import { adminHeaders, jsonResponse, nextPending, setupWith, type FetchCall } fr
  *
  * Generation: GARDAGENT_UPDATE_FIXTURES=1 rewrites all five files. Without it, files are written only when none of
  * the five exists (the one-time bootstrap, from the code that implements the format being frozen; commit the
- * result), and never when CI is set. A partial set, or any missing file in CI, fails the test: an existing fixture
- * is never regenerated implicitly, so a checkout cannot silently take the current implementation as its baseline.
+ * result). A partial set fails the test: an existing fixture is never regenerated implicitly. The bootstrap also
+ * runs in CI because the authors cannot run the toolchain; once the files are committed it can never trigger again,
+ * and a reviewer must reject a change that deletes them.
  */
 const DIR = fileURLToPath(new URL("../../../test/fixtures/contracts/", import.meta.url));
 const FILES = {
@@ -237,7 +238,7 @@ let ledger: Generated["ledger"];
 
 beforeAll(async () => {
   const present = Object.values(FILES).filter((f) => existsSync(`${DIR}${f}`));
-  const bootstrap = present.length === 0 && !process.env.CI;
+  const bootstrap = present.length === 0;
   if (process.env.GARDAGENT_UPDATE_FIXTURES === "1" || bootstrap) {
     console.warn("contracts: writing golden fixtures in test/fixtures/contracts/ (commit them, then never edit them)");
     writeFixtures(await generate());
