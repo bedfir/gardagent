@@ -11,7 +11,11 @@ limitations.
 | [reference.md](reference.md) | Detailed behavior: provider headers, MCP governance and read/write tools, `observe` and `enforce` modes, database outage handling, human approval, the admin API, the console. |
 | [industrial-setup.md](industrial-setup.md) | Declaring MCP servers with read and write tools for plant and ERP-style environments, why writes need approval, and a safety notice (Gardagent is not a functional-safety system). |
 | [migration-timing.md](migration-timing.md) | How schema migrations run and measured timings on a one-million-row ledger, with the `tools/migration-timing` script used. |
-| [../deploy/README.md](../deploy/README.md) | The deployment kit: Docker Compose stack, Caddy TLS edge, install, backup, restore and rotation scripts. |
+| [compatibility.md](compatibility.md) | What is stable from 1.0 (HTTP API, error codes, agent key format, ledger format, schema, environment variables), what "compatible" means, the deprecation rule and what is not covered. |
+| [ledger-format.md](ledger-format.md) | The ledger format: version 1 as written by 0.3.0 (fields, canonical JSON, hash input, chain rule) and the version 2 specification. |
+| [mandate.md](mandate.md) | The v1 mandate model: operators, policy revisions, approvals correlated to the entries they authorize, and what a token does not prove. |
+| [mcp-matrix.md](mcp-matrix.md) | Target governance of every MCP method, notification and transport the proxy can see. |
+| [../deploy/README.md](../deploy/README.md)(../deploy/README.md) | The deployment kit: Docker Compose stack, Caddy TLS edge, install, backup, restore and rotation scripts. |
 
 ## Technical archives (validation reports)
 
