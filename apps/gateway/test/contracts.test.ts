@@ -9,9 +9,10 @@ import { adminHeaders, jsonResponse, nextPending, setupWith, type FetchCall } fr
  * Contract tests: the golden fixtures in test/fixtures/contracts/ are produced by the real code paths (this file
  * generates them) and committed. They are only ever added to. See docs/compatibility.md and docs/ledger-format.md.
  *
- * Generation is explicit: GARDAGENT_UPDATE_FIXTURES=1 writes all five files (do it once, from the code that
- * implements the format being frozen, and commit the result). Without it a missing fixture fails the test; nothing
- * is ever regenerated implicitly, so a checkout cannot silently take the current implementation as its baseline.
+ * Generation: GARDAGENT_UPDATE_FIXTURES=1 rewrites all five files. Without it, files are written only when none of
+ * the five exists (the one-time bootstrap, from the code that implements the format being frozen; commit the
+ * result), and never when CI is set. A partial set, or any missing file in CI, fails the test: an existing fixture
+ * is never regenerated implicitly, so a checkout cannot silently take the current implementation as its baseline.
  */
 const DIR = fileURLToPath(new URL("../../../test/fixtures/contracts/", import.meta.url));
 const FILES = {
@@ -235,7 +236,9 @@ const V1_FIELDS = [
 let ledger: Generated["ledger"];
 
 beforeAll(async () => {
-  if (process.env.GARDAGENT_UPDATE_FIXTURES === "1") {
+  const present = Object.values(FILES).filter((f) => existsSync(`${DIR}${f}`));
+  const bootstrap = present.length === 0 && !process.env.CI;
+  if (process.env.GARDAGENT_UPDATE_FIXTURES === "1" || bootstrap) {
     console.warn("contracts: writing golden fixtures in test/fixtures/contracts/ (commit them, then never edit them)");
     writeFixtures(await generate());
   }
