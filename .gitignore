@@ -1,0 +1,9 @@
+node_modules/
+dist/
+*.tsbuildinfo
+.env
+.pnpm-store/
+
+# Deployment secrets and backups
+deploy/.env
+deploy/backups/

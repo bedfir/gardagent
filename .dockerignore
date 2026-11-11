@@ -1,0 +1,21 @@
+# Secrets: never part of the build context or of an image layer.
+.env
+**/.env
+.env.*
+**/.env.*
+!.env.example
+!**/.env.example
+deploy/backups
+**/backups
+# Repository metadata and build output.
+.git
+.github
+node_modules
+**/node_modules
+**/dist
+**/*.tsbuildinfo
+# Logs and local spool files.
+*.log
+**/*.log
+**/*.jsonl
+.pnpm-store

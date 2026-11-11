@@ -1,0 +1,28 @@
+{
+  "name": "@gardagent/report",
+  "version": "0.3.0",
+  "private": true,
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/bedfir/gardagent.git",
+    "directory": "packages/report"
+  },
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./report": {
+      "types": "./dist/report.d.ts",
+      "default": "./dist/report.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "start": "node dist/cli.js"
+  }
+}

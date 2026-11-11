@@ -1,0 +1,12 @@
+{
+  "TCP": {
+    "80": { "HTTP": true }
+  },
+  "Web": {
+    "${TS_CERT_DOMAIN}:80": {
+      "Handlers": {
+        "/": { "Proxy": "http://gateway:8080" }
+      }
+    }
+  }
+}

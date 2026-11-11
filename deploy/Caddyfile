@@ -1,0 +1,42 @@
+# Edge proxy for the Gardagent gateway.
+# GARDAGENT_DOMAIN: public DNS name (automatic HTTPS via Let's Encrypt) or a LAN name/IP/localhost.
+# GARDAGENT_TLS: "acme" (default) = automatic public certificates, "internal" = local Caddy CA (LAN-only plants).
+# GARDAGENT_ADMIN_ALLOWED_CIDRS: space-separated source networks allowed on /admin/* and /console/*.
+{
+	admin off
+	# Clients that connect by IP address send no SNI; without a default, the handshake fails.
+	default_sni {$GARDAGENT_DOMAIN:localhost}
+}
+
+{$GARDAGENT_DOMAIN:localhost} {
+	tls {
+		issuer {$GARDAGENT_TLS:acme}
+	}
+
+	encode gzip
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "no-referrer"
+		-Server
+	}
+
+	request_body {
+		max_size 10MB
+	}
+
+	@admin_denied {
+		path /admin /admin/* /console /console/*
+		not remote_ip {$GARDAGENT_ADMIN_ALLOWED_CIDRS:10.0.0.0/8 172.16.0.0/12 192.168.0.0/16 127.0.0.1/32}
+	}
+	respond @admin_denied "Forbidden" 403
+
+	reverse_proxy gateway:8080 {
+		flush_interval -1
+		transport http {
+			response_header_timeout 130s
+		}
+	}
+}

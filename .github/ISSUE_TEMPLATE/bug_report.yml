@@ -1,0 +1,69 @@
+name: Bug report
+description: Report a problem or unexpected behavior
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a bug.
+        **Security vulnerabilities must not be reported here.** Use "Report a vulnerability" in the Security tab instead.
+        Never paste real keys, tokens or provider credentials.
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: A clear and concise description of the bug.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: Minimal steps, requests or configuration (with secrets removed) that trigger the problem.
+      placeholder: |
+        1. ...
+        2. ...
+        3. ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: What happened instead. Include error messages, status codes and relevant logs.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Gardagent version
+      description: Release tag or commit hash.
+    validations:
+      required: true
+  - type: dropdown
+    id: deployment
+    attributes:
+      label: Deployment method
+      options:
+        - Docker (root docker-compose.yml)
+        - Docker (deploy/ stack)
+        - Local (pnpm)
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: node
+    attributes:
+      label: Node.js version
+      description: Only if you run without Docker.
+  - type: input
+    id: postgres
+    attributes:
+      label: PostgreSQL version
+      description: Leave empty if you use the bundled Compose database.

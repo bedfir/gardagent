@@ -1,0 +1,99 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: gardagent
+      POSTGRES_USER: gardagent
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in deploy/.env}
+    networks:
+      - backend
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U gardagent -d gardagent"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 512M
+        reservations:
+          cpus: "0.25"
+          memory: 128M
+
+  gateway:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    env_file: .env
+    environment:
+      DATABASE_URL: postgres://gardagent:${POSTGRES_PASSWORD}@postgres:5432/gardagent
+      # The gateway publishes no port: Caddy (which overwrites X-Forwarded-For) is its only client. This lets the
+      # authentication failure limiter see the real client address instead of Caddy's.
+      GARDAGENT_TRUST_PROXY: "true"
+    volumes:
+      - ledger_spool:/app/spool
+    networks:
+      - backend
+      - edge
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 1G
+        reservations:
+          cpus: "0.5"
+          memory: 256M
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    depends_on:
+      gateway:
+        condition: service_healthy
+    environment:
+      GARDAGENT_DOMAIN: ${GARDAGENT_DOMAIN:-localhost}
+      GARDAGENT_TLS: ${GARDAGENT_TLS:-acme}
+      GARDAGENT_ADMIN_ALLOWED_CIDRS: ${GARDAGENT_ADMIN_ALLOWED_CIDRS:-10.0.0.0/8 172.16.0.0/12 192.168.0.0/16 127.0.0.1/32}
+    ports:
+      - "80:80"
+      - "443:443"
+    networks:
+      - edge
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256M
+
+networks:
+  # Postgres and the gateway only: internal network, no route to the outside.
+  backend:
+    internal: true
+  # Caddy and the gateway only. Not internal: the gateway needs outbound access to
+  # the model provider and Caddy needs it for ACME. No other service joins it.
+  edge:
+
+volumes:
+  pgdata:
+  ledger_spool:
+  caddy_data:
+  caddy_config:
