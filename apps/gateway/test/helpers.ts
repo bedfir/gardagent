@@ -81,13 +81,13 @@ export async function createAgent(
   return res.json() as { agent: { id: string }; key: string };
 }
 
-/** Yield to I/O until observable state is ready; the deadline only bounds failures. */
+/** Poll observable state with bounded backoff; the deadline only bounds failures. */
 export async function waitUntil<T>(read: () => T | Promise<T>, ready: (value: T) => boolean, timeoutMs = 3000): Promise<T> {
   const deadline = Date.now() + timeoutMs;
   do {
     const value = await read();
     if (ready(value)) return value;
-    await new Promise<void>((resolve) => setImmediate(resolve));
+    await new Promise<void>((resolve) => setTimeout(resolve, 10));
   } while (Date.now() < deadline);
   throw new Error("Observable test state was not reached before the deadline");
 }

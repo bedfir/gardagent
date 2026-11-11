@@ -9,7 +9,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Fixed
 
 - Pilot-zero restart validation now reports failure causes and checks ledger coverage, orphan reservations, and spend consistency.
-- Gateway tests synchronize on observable state instead of short fixed delays.
+- Gateway tests synchronize on observable state instead of short fixed delays; MCP migration fixtures use isolated schemas.
+- Pilot-zero restart requests time out after 120 seconds so stalled requests are reported.
 
 ## [0.3.0] - 2026-11-11
 

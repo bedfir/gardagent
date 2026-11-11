@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import pg from "pg";
 import { describe, expect, it } from "vitest";
 import { canonicalJson, sha256 } from "@gardagent/core";
@@ -267,27 +268,40 @@ describe("mcp: read/write classification", () => {
 const dbUrl = process.env.TEST_DATABASE_URL;
 describe.skipIf(!dbUrl)("mcp: PostgreSQL migration", () => {
   it("adds allowed_tools to an existing agents table, idempotently", async () => {
-    const admin = new pg.Pool({ connectionString: dbUrl, max: 1 });
-    await admin.query("DROP SCHEMA IF EXISTS ga_mcp CASCADE");
-    await admin.query("CREATE SCHEMA ga_mcp");
-    await admin.end();
-    const pool = new pg.Pool({ connectionString: dbUrl, options: "-c search_path=ga_mcp" });
-    try {
-      await pool.query(`CREATE TABLE agents (id TEXT PRIMARY KEY, name TEXT NOT NULL, key_hash TEXT NOT NULL UNIQUE,
-        allowed_models TEXT[] NOT NULL, daily_budget BIGINT NOT NULL DEFAULT 0, active BOOLEAN NOT NULL DEFAULT TRUE,
-        created_at TIMESTAMPTZ NOT NULL DEFAULT now())`);
-      await pool.query("INSERT INTO agents (id, name, key_hash, allowed_models) VALUES ('old', 'ancien', 'h', '{a}')");
-      const store = new PgStore(pool);
-      await store.migrate();
-      await store.migrate();
-      expect((await store.getAgent("old"))!.allowedTools).toEqual([]);
-      await store.updateAgent("old", { allowedTools: ["gh/*"] });
-      await store.migrate();
-      expect((await store.getAgent("old"))!.allowedTools).toEqual(["gh/*"]);
-      const { rows } = await pool.query("SELECT column_default, is_nullable FROM information_schema.columns WHERE table_schema='ga_mcp' AND table_name='agents' AND column_name='allowed_tools'");
-      expect(rows[0]).toMatchObject({ is_nullable: "NO" });
-    } finally {
-      await pool.end();
+    // Concurrent fixtures also cover overlapping invocations against the same database.
+    const migrateFixture = async (allowedTool: string) => {
+      const schema = `ga_mcp_${randomUUID().replaceAll("-", "")}`;
+      const admin = new pg.Pool({ connectionString: dbUrl, max: 1 });
+      const pool = new pg.Pool({ connectionString: dbUrl, options: `-c search_path=${schema}` });
+      try {
+        // Completion of CREATE SCHEMA is the readiness signal; no timing delay.
+        await admin.query(`CREATE SCHEMA "${schema}"`);
+        await pool.query(`CREATE TABLE agents (id TEXT PRIMARY KEY, name TEXT NOT NULL, key_hash TEXT NOT NULL UNIQUE,
+          allowed_models TEXT[] NOT NULL, daily_budget BIGINT NOT NULL DEFAULT 0, active BOOLEAN NOT NULL DEFAULT TRUE,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT now())`);
+        await pool.query("INSERT INTO agents (id, name, key_hash, allowed_models) VALUES ('old', 'ancien', 'h', '{a}')");
+        const store = new PgStore(pool);
+        await store.migrate();
+        await store.migrate();
+        expect((await store.getAgent("old"))!.allowedTools).toEqual([]);
+        await store.updateAgent("old", { allowedTools: [allowedTool] });
+        await store.migrate();
+        expect((await store.getAgent("old"))!.allowedTools).toEqual([allowedTool]);
+        const { rows } = await pool.query("SELECT column_default, is_nullable FROM information_schema.columns WHERE table_schema=$1 AND table_name='agents' AND column_name='allowed_tools'", [schema]);
+        expect(rows[0]).toMatchObject({ is_nullable: "NO" });
+      } finally {
+        try {
+          await pool.end();
+        } finally {
+          try { await admin.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`); }
+          finally { await admin.end(); }
+        }
+      }
+    };
+    // Wait for both cleanups even if one fixture fails.
+    const results = await Promise.allSettled([migrateFixture("gh/*"), migrateFixture("erp/*")]);
+    for (const result of results) {
+      if (result.status === "rejected") throw result.reason;
     }
   });
 });
