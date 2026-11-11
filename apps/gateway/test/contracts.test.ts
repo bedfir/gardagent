@@ -9,11 +9,9 @@ import { adminHeaders, jsonResponse, nextPending, setupWith, type FetchCall } fr
  * Contract tests: the golden fixtures in test/fixtures/contracts/ are produced by the real code paths (this file
  * generates them) and committed. They are only ever added to. See docs/compatibility.md and docs/ledger-format.md.
  *
- * Generation: GARDAGENT_UPDATE_FIXTURES=1 rewrites all five files. Without it, files are written only when none of
- * the five exists (the one-time bootstrap, from the code that implements the format being frozen; commit the
- * result). A partial set fails the test: an existing fixture is never regenerated implicitly. The bootstrap also
- * runs in CI because the authors cannot run the toolchain; once the files are committed it can never trigger again,
- * and a reviewer must reject a change that deletes them.
+ * Generation is explicit: GARDAGENT_UPDATE_FIXTURES=1 rewrites all five files, and nothing else ever writes them.
+ * A normal run with a missing fixture fails (also in CI), so a fresh checkout cannot generate its own baseline.
+ * A reviewer must reject a change that deletes or regenerates them without a documented format change.
  */
 const DIR = fileURLToPath(new URL("../../../test/fixtures/contracts/", import.meta.url));
 const FILES = {
@@ -214,6 +212,19 @@ function shape(value: unknown): unknown {
   return typeof value;
 }
 
+/** Machine-readable error values (error, code, type, reason strings) with their paths. */
+function errorValues(value: unknown, path = ""): Record<string, string> {
+  const out: Record<string, string> = {};
+  if (Array.isArray(value)) value.forEach((v, i) => Object.assign(out, errorValues(v, `${path}[${i}]`)));
+  else if (value !== null && typeof value === "object") {
+    for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+      if (typeof v === "string" && ["error", "code", "type", "reason"].includes(k)) out[`${path}.${k}`] = v;
+      else Object.assign(out, errorValues(v, `${path}.${k}`));
+    }
+  }
+  return out;
+}
+
 /** The hash algorithm exactly as written in docs/ledger-format.md, independent of packages/core. */
 function documentedCanonical(value: unknown): string {
   if (value === null || typeof value !== "object") return JSON.stringify(value);
@@ -237,9 +248,7 @@ const V1_FIELDS = [
 let ledger: Generated["ledger"];
 
 beforeAll(async () => {
-  const present = Object.values(FILES).filter((f) => existsSync(`${DIR}${f}`));
-  const bootstrap = present.length === 0;
-  if (process.env.GARDAGENT_UPDATE_FIXTURES === "1" || bootstrap) {
+  if (process.env.GARDAGENT_UPDATE_FIXTURES === "1") {
     console.warn("contracts: writing golden fixtures in test/fixtures/contracts/ (commit them, then never edit them)");
     writeFixtures(await generate());
   }
@@ -334,6 +343,9 @@ describe("contract: HTTP API samples", () => {
         status: expected.status,
       });
       expect({ sample, shape: shape(actual.response) }).toEqual({ sample, shape: shape(expected.response) });
+      if (expected.status >= 400) {
+        expect({ sample, errors: errorValues(actual.response) }).toEqual({ sample, errors: errorValues(expected.response) });
+      }
     }
   });
 
