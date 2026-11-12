@@ -119,19 +119,22 @@ test("filters real ledger entries, restores filters on reload and displays integ
   await page.getByRole("button", { name: "Ledger", exact: true }).click();
   const filters = page.getByRole("search", { name: "Ledger filters" });
   const rows = page.locator("tbody tr");
-  await filters.getByLabel("Agent", { exact: true }).selectOption({ label: "Alpha" });
-  await filters.getByLabel("Model", { exact: true }).selectOption("fixture-b");
-  await filters.getByLabel("Verdict", { exact: true }).selectOption("denied");
+  const agentFilter = filters.getByRole("combobox", { name: "Agent", exact: true });
+  await agentFilter.selectOption({ label: "Alpha" });
+  await expect(agentFilter).toHaveValue(alpha.agent.id);
+  await filters.getByRole("combobox", { name: "Model", exact: true }).selectOption("fixture-b");
+  await filters.getByRole("combobox", { name: "Verdict", exact: true }).selectOption("denied");
   await expect(rows).toHaveCount(1);
   await expect(rows).toContainText(["Alpha"]);
   await expect(rows).toContainText(["model not allowed"]);
   await page.reload();
-  await expect(filters.getByLabel("Model", { exact: true })).toHaveValue("fixture-b");
+  await expect(filters.getByRole("combobox", { name: "Model", exact: true })).toHaveValue("fixture-b");
   await expect(rows).toHaveCount(1);
   await expect(rows).toContainText(["Alpha"]);
   await filters.getByRole("button", { name: "Reset", exact: true }).click();
   await expect(rows).toHaveCount(5); // Two agent creations and three requests.
-  await filters.getByLabel("Agent", { exact: true }).selectOption({ label: "Beta" });
+  await agentFilter.selectOption({ label: "Beta" });
+  await expect(agentFilter).toHaveValue(beta.agent.id);
   await filters.getByLabel("Min. cost (USD)", { exact: true }).fill("0.1");
   await filters.getByLabel("Max. cost (USD)", { exact: true }).fill("0.3");
   await filters.getByRole("button", { name: "Filter", exact: true }).click();

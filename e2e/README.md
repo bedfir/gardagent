@@ -16,11 +16,12 @@ writable prefix (for example, `npm install --prefix /cache/pnpm --no-package-loc
 before running `pnpm test:e2e`. This setup belongs to the runner, before the script
 is invoked; suppressing a failed `corepack enable` leaves pnpm unavailable.
 
-Earlier gate attempts reported `pnpm: not found` before browser execution. The
-runner must provision pnpm successfully inside the Playwright container before
-invoking the script and stop immediately if provisioning fails. Browser acceptance
-remains unverified until the runner reports a passing suite. The current checkout
-includes the pinned Playwright dependency and its generated lockfile entries.
+The latest runner gate passed installation, type checking, 829 tests, the build
+and three browser tests. The ledger browser test timed out on an exact label
+lookup for a select inside a wrapping label. It now uses combobox role/name
+locators and checks selected agent IDs; all filter and integrity assertions remain.
+A passing rerun is still required. The current checkout includes the pinned
+Playwright dependency and its generated lockfile entries.
 
 Each test starts its own real gateway on an ephemeral loopback port with a fresh
 MemoryStore and serves `apps/console/dist`. Admin routes are authenticated with an
