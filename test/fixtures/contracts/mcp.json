@@ -1,0 +1,96 @@
+{
+  "approvedCall": {
+    "method": "POST",
+    "route": "/mcp/gh",
+    "request": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "method": "tools/call",
+      "params": {
+        "name": "search",
+        "arguments": {
+          "q": "contract"
+        }
+      }
+    },
+    "status": 200,
+    "response": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "ok"
+          }
+        ]
+      }
+    }
+  },
+  "toolNotAllowed": {
+    "method": "POST",
+    "route": "/mcp/gh",
+    "request": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "method": "tools/call",
+      "params": {
+        "name": "delete",
+        "arguments": {}
+      }
+    },
+    "status": 200,
+    "response": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "error": {
+        "code": -32001,
+        "message": "Tool \"delete\" on server \"gh\" is not allowed for agent contract-limited."
+      }
+    }
+  },
+  "invalidKey": {
+    "method": "POST",
+    "route": "/mcp/gh",
+    "request": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "method": "tools/call",
+      "params": {
+        "name": "search"
+      }
+    },
+    "status": 401,
+    "response": {
+      "jsonrpc": "2.0",
+      "id": null,
+      "error": {
+        "code": -32000,
+        "message": "Invalid or missing Gardagent agent key."
+      }
+    }
+  },
+  "batchRefused": {
+    "method": "POST",
+    "route": "/mcp/gh",
+    "request": [
+      {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+          "name": "search"
+        }
+      }
+    ],
+    "status": 400,
+    "response": {
+      "jsonrpc": "2.0",
+      "id": null,
+      "error": {
+        "code": -32600,
+        "message": "JSON-RPC batches are not supported: send one message per request."
+      }
+    }
+  }
+}
