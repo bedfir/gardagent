@@ -1,0 +1,113 @@
+{
+  "allowed": {
+    "method": "POST",
+    "route": "/v1/chat/completions",
+    "request": {
+      "model": "gpt-4o-mini",
+      "messages": [
+        {
+          "role": "user",
+          "content": "hello"
+        }
+      ]
+    },
+    "status": 200,
+    "response": {
+      "id": "chatcmpl-contract",
+      "object": "chat.completion",
+      "choices": [
+        {
+          "index": 0,
+          "message": {
+            "role": "assistant",
+            "content": "hello"
+          },
+          "finish_reason": "stop"
+        }
+      ],
+      "usage": {
+        "prompt_tokens": 100,
+        "completion_tokens": 50,
+        "total_tokens": 150
+      }
+    }
+  },
+  "invalidKey": {
+    "method": "POST",
+    "route": "/v1/chat/completions",
+    "request": {
+      "model": "gpt-4o-mini",
+      "messages": [
+        {
+          "role": "user",
+          "content": "hello"
+        }
+      ]
+    },
+    "status": 401,
+    "response": {
+      "error": {
+        "message": "Invalid or missing Gardagent agent key.",
+        "type": "invalid_request_error",
+        "code": "invalid_api_key"
+      }
+    }
+  },
+  "missingModel": {
+    "method": "POST",
+    "route": "/v1/chat/completions",
+    "request": {
+      "messages": []
+    },
+    "status": 400,
+    "response": {
+      "error": {
+        "message": "The « model » field is required.",
+        "type": "invalid_request_error",
+        "code": "missing_model"
+      }
+    }
+  },
+  "modelNotAllowed": {
+    "method": "POST",
+    "route": "/v1/chat/completions",
+    "request": {
+      "model": "gpt-4o",
+      "messages": [
+        {
+          "role": "user",
+          "content": "hello"
+        }
+      ]
+    },
+    "status": 403,
+    "response": {
+      "error": {
+        "message": "Model gpt-4o is not allowed for agent contract-limited.",
+        "type": "gardagent_policy",
+        "code": "model_not_allowed"
+      }
+    }
+  },
+  "budgetExceeded": {
+    "method": "POST",
+    "route": "/v1/chat/completions",
+    "request": {
+      "model": "gpt-4o-mini",
+      "messages": [
+        {
+          "role": "user",
+          "content": "hello"
+        }
+      ]
+    },
+    "status": 429,
+    "response": {
+      "error": {
+        "message": "Daily budget reached for agent contract-tiny.",
+        "type": "gardagent_policy",
+        "code": "budget_exceeded"
+      }
+    }
+  }
+}
