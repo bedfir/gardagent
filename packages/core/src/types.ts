@@ -21,6 +21,10 @@ export interface Agent {
   approvalTools: string[];
   /** Daily spending cap (UTC). 0 = unlimited. */
   dailyBudget: MicroUsd;
+  /** Rolling 60-second admission cap; absent or zero means unlimited. */
+  requestsPerMinute?: number;
+  /** Active request cap; absent or zero means unlimited. */
+  maxConcurrentRequests?: number;
   active: boolean;
 }
 
@@ -107,6 +111,10 @@ export interface AgentPatch {
   allowedTools?: string[];
   approvalTools?: string[];
   dailyBudget?: MicroUsd;
+  /** Rolling 60-second admission cap; absent or zero means unlimited. */
+  requestsPerMinute?: number;
+  /** Active request cap; absent or zero means unlimited. */
+  maxConcurrentRequests?: number;
   active?: boolean;
 }
 

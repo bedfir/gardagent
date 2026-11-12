@@ -48,7 +48,7 @@ export function registerProxy(app: FastifyInstance, deps: ProxyDeps): void {
         .send(openAiError("The « model » field is required.", "invalid_request_error", "missing_model"));
     }
 
-    const { ctx, denial } = await gov.admit(ACTION, agent, model, body);
+    const { ctx, denial } = await gov.admit(ACTION, agent, model, body, reply);
     if (denial) {
       return reply.code(denial.status).send(openAiError(denial.message, "gardagent_policy", denial.reason));
     }

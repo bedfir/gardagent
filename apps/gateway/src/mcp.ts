@@ -81,25 +81,24 @@ export function registerMcp(app: FastifyInstance, deps: McpDeps): void {
       await journal("mcp_client_response_refused", true);
       return reply.code(400).send(rpcError(id, -32600, "Invalid JSON-RPC request."));
     }
+    let observedReason: string | null = null;
+    const rate = await gov.rateLimit(agent, reply, base);
+    if (rate.denied) return notification ? reply.code(429).send() : reply.code(200).send(rpcError(id, -32004, "Agent request limit reached.", { retryAfter: rate.retryAfter }));
+    if (rate.observed) observedReason = "observed:rate_limited";
     const declared = notification
       ? (MCP_NOTIFICATIONS as readonly string[]).includes(msg.method)
       : (MCP_REQUESTS as readonly string[]).includes(msg.method);
-    let observedReason: string | null = null;
     if (!declared) {
       if (config.mode !== "observe") {
         await journal("method_not_governed", true);
         return notification ? reply.code(202).send() : reply.send(rpcError(id, -32601, "Method not governed."));
       }
-      observedReason = "observed:method_not_governed";
+      observedReason ??= "observed:method_not_governed";
     }
     if (notification && msg.method === "notifications/cancelled" &&
         !["string", "number"].includes(typeof (msg.params as Record<string, unknown> | undefined)?.requestId)) {
       await journal("invalid_params", true);
       return reply.code(202).send();
-    }
-    if (!notification && msg.method === "ping") {
-      await journal(null);
-      return reply.send({ jsonrpc: "2.0", id, result: {} });
     }
     let tool: string | null = null;
     let ctxBase: { agentId: string; action: string; model: string; requestHash: string; policyRev: string; approvalRef?: string } = base;
@@ -124,7 +123,7 @@ export function registerMcp(app: FastifyInstance, deps: McpDeps): void {
       };
       if (!toolAllowed(agent, serverName, tool)) {
         if (config.mode === "observe") {
-          observedReason = "observed:tool_not_allowed";
+          observedReason ??= "observed:tool_not_allowed";
         } else {
           await gov.record({
             ...ctxBase,
@@ -142,6 +141,11 @@ export function registerMcp(app: FastifyInstance, deps: McpDeps): void {
             .send(rpcError(id, -32001, `Tool "${tool}" on server "${serverName}" is not allowed for agent ${agent.name}.`));
         }
       }
+    }
+
+    if (!notification && msg.method === "ping") {
+      await journal(observedReason);
+      return reply.send({ jsonrpc: "2.0", id, result: {} });
     }
 
     // Human validation: WRITE tools always require approval; READ tools only if listed in approvalTools.
@@ -164,7 +168,7 @@ export function registerMcp(app: FastifyInstance, deps: McpDeps): void {
     }
     if (tool && ctxBase && observedReason !== "observed:tool_not_allowed" && approvalRequired) {
       if (config.mode === "observe") {
-        observedReason = "observed:approval_required";
+        observedReason ??= "observed:approval_required";
       } else {
       const closed = new AbortController();
       reply.raw.on("close", () => {
@@ -275,7 +279,7 @@ export function registerMcp(app: FastifyInstance, deps: McpDeps): void {
           const capabilities = result.capabilities as Record<string, unknown>;
           const filtered = Object.fromEntries(Object.entries(capabilities).filter(([name]) => name === "tools"));
           if (Object.keys(filtered).length !== Object.keys(capabilities).length) {
-            if (config.mode === "observe") observedReason = "observed:method_not_governed";
+            if (config.mode === "observe") observedReason ??= "observed:method_not_governed";
             else return { ...message, result: { ...result, capabilities: filtered } };
           }
         }
@@ -285,7 +289,7 @@ export function registerMcp(app: FastifyInstance, deps: McpDeps): void {
         if (Array.isArray(result.tools)) {
           const filtered = result.tools.filter((item: unknown) => item !== null && typeof item === "object" && typeof (item as Record<string, unknown>).name === "string" && toolAllowed(admittedAgent, serverName, (item as { name: string }).name));
           if (filtered.length !== result.tools.length) {
-            if (config.mode === "observe") observedReason = "observed:tool_not_allowed";
+            if (config.mode === "observe") observedReason ??= "observed:tool_not_allowed";
             else return { ...message, result: { ...result, tools: filtered } };
           }
         }

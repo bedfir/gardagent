@@ -20,6 +20,9 @@ import { agentCacheOptions, guardOptions, RESERVATION_MARGIN_MS, type GatewayCon
 import { authSummaryRow } from "./auth-limiter.js";
 import { DbTimeoutError, ledgerGuardFor, type SpoolMeta } from "./ledger-guard.js";
 
+import { AgentRateLimiter } from "./rate-limiter.js";
+const limiters = new WeakMap<FastifyInstance, AgentRateLimiter>();
+
 const SESSION_HEADER = "x-opencode-session";
 
 /** Never forwarded to the provider, even if listed in the configuration. */
@@ -78,7 +81,8 @@ export interface CallContext {
 
 export interface Denial {
   status: 403 | 429 | 503;
-  reason: "agent_disabled" | "model_not_allowed" | "budget_exceeded" | "ledger_unavailable";
+  retryAfter?: number;
+  reason: "rate_limited" | "agent_disabled" | "model_not_allowed" | "budget_exceeded" | "ledger_unavailable";
   message: string;
 }
 
@@ -121,6 +125,24 @@ export function bearer(request: FastifyRequest): string | null {
  */
 export function createGovernance(app: FastifyInstance, deps: { config: GatewayConfig; store: Store }) {
   const { config, store } = deps;
+  let limiter = limiters.get(app);
+  if (!limiter) { limiter = new AgentRateLimiter(); limiters.set(app, limiter); }
+
+  async function rateLimit(agent: Agent, reply: FastifyReply, base: CallContext["base"]): Promise<{ denied: boolean; observed: boolean; retryAfter?: number }> {
+    const slot = limiter!.acquire(agent, config.mode === "observe");
+    if (!slot.retryAfter || config.mode === "observe") {
+      reply.raw.once("finish", slot.release);
+      reply.raw.once("close", slot.release);
+      if (reply.raw.destroyed || reply.raw.writableFinished) slot.release();
+    }
+    if (slot.retryAfter) {
+      if (config.mode === "observe") return { denied: false, observed: true };
+      await record({ ...base, verdict: "denied", reason: "rate_limited", upstreamStatus: null, promptTokens: 0, completionTokens: 0, cost: 0, responseHash: null });
+      reply.header("Retry-After", slot.retryAfter);
+      return { denied: true, observed: false, retryAfter: slot.retryAfter };
+    }
+    return { denied: false, observed: false };
+  }
   /** A reservation older than the upstream timeout plus a margin is considered orphaned (crashed gateway). */
   const reservationTtlMs = config.upstreamTimeoutMs + RESERVATION_MARGIN_MS;
 
@@ -214,6 +236,7 @@ export function createGovernance(app: FastifyInstance, deps: { config: GatewayCo
     agent: Agent,
     model: string,
     body: Record<string, unknown>,
+    reply: FastifyReply,
   ): Promise<{ ctx: CallContext; denial: Denial | null }> {
     const day = budgetDay();
     if (!guard.canServe()) {
@@ -230,6 +253,9 @@ export function createGovernance(app: FastifyInstance, deps: { config: GatewayCo
       estimatedCost: estimateCost(config, model, body),
       base: { agentId: agent.id, action, model, requestHash: sha256(canonicalJson(body)), policyRev: policyRevision(agent).id },
     };
+    const rate = await rateLimit(agent, reply, ctx.base);
+    if (rate.denied) return { ctx, denial: { status: 429, reason: "rate_limited", message: "Agent request limit reached.", retryAfter: rate.retryAfter } };
+    if (rate.observed) ctx.observedReason = "observed:rate_limited";
     // Fail-open (observe only): without the database, spend is unknown and no reservation is taken; the
     // spooled row carries the cost and the day so that a later settlement can account for it.
     let spentToday = 0;
@@ -255,7 +281,7 @@ export function createGovernance(app: FastifyInstance, deps: { config: GatewayCo
       }
       if (ctx.reservationId === null && !ctx.degraded) {
         if (config.mode === "observe") {
-          ctx.observedReason = "observed:budget_exceeded";
+          ctx.observedReason ??= "observed:budget_exceeded";
           return { ctx, denial: null };
         }
         return deny(ctx, { allowed: false, reason: "budget_exceeded", message: `Daily budget reached for agent ${agent.name}.` });
@@ -263,7 +289,7 @@ export function createGovernance(app: FastifyInstance, deps: { config: GatewayCo
     }
     if (decision.allowed) return { ctx, denial: null };
     if (config.mode === "observe") {
-      ctx.observedReason = `observed:${decision.reason}`;
+      ctx.observedReason ??= `observed:${decision.reason}`;
       return { ctx, denial: null };
     }
     return deny(ctx, decision);
@@ -396,5 +422,5 @@ export function createGovernance(app: FastifyInstance, deps: { config: GatewayCo
     return out;
   }
 
-  return { upstreamHeaders, record, ledgerReady, degraded, authenticate, admit, startCall, recordUnreachable, settle };
+  return { rateLimit, upstreamHeaders, record, ledgerReady, degraded, authenticate, admit, startCall, recordUnreachable, settle };
 }

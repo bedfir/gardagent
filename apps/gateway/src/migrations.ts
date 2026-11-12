@@ -256,6 +256,9 @@ export const MIGRATIONS: readonly Migration[] = [
     }
     await client.query("ALTER TABLE agents ALTER COLUMN policy_rev SET NOT NULL");
   } },
+  { version: 4, name: "Agent rate limits", up: async (client) => {
+    await client.query(`ALTER TABLE agents ADD COLUMN requests_per_minute INTEGER CHECK (requests_per_minute > 0), ADD COLUMN max_concurrent_requests INTEGER CHECK (max_concurrent_requests > 0)`);
+  } },
 ];
 
 /** The optional migration list permits rollback tests without shipping a failing migration. */

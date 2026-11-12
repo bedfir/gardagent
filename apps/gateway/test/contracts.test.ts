@@ -199,13 +199,17 @@ function readFixture<T>(file: string): T {
   return JSON.parse(readFileSync(`${DIR}${file}`, "utf-8")) as T;
 }
 
-/** M05 extends the historical API samples; keep the v1 proof fixture byte-for-byte intact. */
+/** M05 and M09 extend the historical API samples; keep the v1 proof fixture byte-for-byte intact. */
 function withMandateFields(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(withMandateFields);
   if (value === null || typeof value !== "object") return value;
   const row = value as Record<string, unknown>;
   const next = Object.fromEntries(Object.entries(row).map(([k, v]) => [k, withMandateFields(v)]));
-  if ("allowedModels" in row && "dailyBudgetUsd" in row) next.policyRev = "content-hash";
+  if ("allowedModels" in row && "dailyBudgetUsd" in row) {
+    next.policyRev = "content-hash";
+    next.requestsPerMinute = 0;
+    next.maxConcurrentRequests = 0;
+  }
   if ("argsHash" in row && "status" in row) {
     next.policyRev = "content-hash";
     if (row.status === "approved" || row.status === "rejected") next.operatorId = "bootstrap";
