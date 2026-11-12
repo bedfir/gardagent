@@ -253,11 +253,13 @@ describe("mcp: read/write classification", () => {
   });
 
   it("observe mode forwards read tools without approval_required reason", async () => {
-    const { app, store, calls } = setupWith({ mcpServers: mixedServers, mode: "observe" });
+    const { app, store, calls } = setupWith({ mcpServers: mixedServers, mode: "observe" }, () => jsonResponse(ok));
     const { key } = await createAgent(app, { name: "bot", allowedModels: ["*"], allowedTools: ["erp/*"], approvalTools: [], dailyBudgetUsd: 0, unlimited: true });
     const res = await post(app, key, call("read_work_order"), {}, "erp");
     expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual(ok);
     expect(calls).toHaveLength(1);
+    expect(await store.listApprovals()).toHaveLength(0);
     expect((await proxyLedger(store))[0]).toMatchObject({
       action: "mcp.tools/call",
       model: "erp/read_work_order#read",
@@ -309,6 +311,19 @@ const refusedMethods = ["resources/list", "resources/templates/list", "resources
 const refusedNotifications = ["notifications/progress", "notifications/roots/list_changed", "notifications/unknown"];
 
 describe("mcp: exhaustive governance matrix", () => {
+  it.each(["enforce", "observe"] as const)("%s suppresses and journals malformed upstream responses", async (mode) => {
+    const { app, store, calls } = setupWith({ mcpServers: servers, mode }, () => jsonResponse({}));
+    const { key } = await agentWith(app, ["gh/search"]);
+    const res = await post(app, key, call("search"));
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ jsonrpc: "2.0", id: 1, error: { code: -32603 } });
+    expect(calls).toHaveLength(1);
+    expect((await proxyLedger(store))[0]).toMatchObject({
+      action: "mcp.tools/call", model: "gh/search#read", verdict: "allowed",
+      reason: "invalid_upstream_message", responseHash: sha256(res.body),
+    });
+  });
+
   it("declares every named method in the written matrix", () => {
     const matrix = readFileSync(new URL("../../../docs/mcp-matrix.md", import.meta.url), "utf8");
     const declared = new Set<string>([...MCP_REQUESTS, ...MCP_NOTIFICATIONS, ...MCP_SERVER_NOTIFICATIONS, ...refusedMethods, ...refusedNotifications, "sampling/createMessage", "elicitation/create", "roots/list"]);
