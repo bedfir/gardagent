@@ -248,6 +248,18 @@ export const fr = {
   "agents.errBudgetTiny": "Le budget doit valoir au moins 0,000001 USD (un montant plus petit voudrait dire sans plafond). Utilisez 0 pour aucun plafond.",
   "agents.errName": "Indiquez le nom de l'agent.",
   "agents.errBudgetCreate": "Saisissez un budget journalier supérieur à zéro, ou cochez « Aucun plafond (illimité) ».",
+  "agents.colRequestsPerMinute": "Limite RPM",
+  "agents.colMaxConcurrent": "Limite simultanées",
+  "agents.dlRequestsPerMinute": "Limite RPM",
+  "agents.dlMaxConcurrent": "Limite simultanées",
+  "agents.editRequestsPerMinuteAria": "Limite de requêtes par minute (0 = illimité)",
+  "agents.editMaxConcurrentAria": "Nombre maximal de requêtes simultanées (0 = illimité)",
+  "agents.fRequestsPerMinute": "Limite de requêtes par minute",
+  "agents.fRequestsPerMinuteHint": "0 signifie illimité.",
+  "agents.fMaxConcurrent": "Requêtes simultanées maximales",
+  "agents.fMaxConcurrentHint": "0 signifie illimité.",
+  "agents.errRequestsPerMinute": "La limite de requêtes par minute doit être un entier positif ou nul, au plus 2147483647.",
+  "agents.errMaxConcurrent": "Le nombre maximal de requêtes simultanées doit être un entier positif ou nul, au plus 2147483647.",
 } as const;
 
 /** Every dictionary key; the English file is typed against it. */

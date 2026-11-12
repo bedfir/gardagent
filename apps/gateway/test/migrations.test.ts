@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import pg from "pg";
 import { describe, expect, it } from "vitest";
-import { verifyChain, type LedgerEntry } from "@gardagent/core";
+import { verifyChain, policyRevision, type Agent, type LedgerEntry } from "@gardagent/core";
 import { PgStore } from "../src/pg-store.js";
 import { MIGRATIONS, migrateDatabase } from "../src/migrations.js";
 
@@ -90,11 +90,11 @@ describe.skipIf(!url)("versioned PostgreSQL migrations", () => {
 
   it("rolls back failing DDL and data while retaining the previous version", async () => fixture(async (pool, store) => {
     await store.migrate();
-    await expect(migrateDatabase(pool, [...MIGRATIONS, { version: 4, name: "deliberate failure", up: async (client) => {
+    await expect(migrateDatabase(pool, [...MIGRATIONS, { version: 5, name: "deliberate failure", up: async (client) => {
       await client.query("CREATE TABLE rollback_probe (id INTEGER)");
       await client.query("INSERT INTO spend_settlements (key) VALUES ('rollback-probe')");
       await client.query("SELECT deliberately_missing_function()");
-    } }])).rejects.toThrow(/migration 4.*failed/);
+    } }])).rejects.toThrow(/migration 5.*failed/);
     expect((await pool.query("SELECT to_regclass('rollback_probe') AS relation")).rows[0].relation).toBeNull();
     expect((await pool.query("SELECT * FROM spend_settlements")).rows).toEqual([]);
     expect((await pool.query("SELECT version FROM schema_migrations ORDER BY version")).rows).toEqual(MIGRATIONS.map(({ version }) => ({ version })));
@@ -103,9 +103,9 @@ describe.skipIf(!url)("versioned PostgreSQL migrations", () => {
 
   it("refuses a database newer than the executable", async () => fixture(async (pool, store) => {
     await store.migrate();
-    await pool.query("INSERT INTO schema_migrations (version, name) VALUES (4, 'future')");
-    await expect(store.migrate()).rejects.toThrow(/version 4 is newer than supported version 3/);
-    expect((await pool.query("SELECT count(*) FROM schema_migrations")).rows[0].count).toBe("4");
+    await pool.query("INSERT INTO schema_migrations (version, name) VALUES (5, 'future')");
+    await expect(store.migrate()).rejects.toThrow(/version 5 is newer than supported version 4/);
+    expect((await pool.query("SELECT count(*) FROM schema_migrations")).rows[0].count).toBe(String(MIGRATIONS.length + 1));
   }));
 
   it("refuses incomplete unversioned schemas without repairing them", async () => fixture(async (pool, store) => {
@@ -113,5 +113,22 @@ describe.skipIf(!url)("versioned PostgreSQL migrations", () => {
     await pool.query("ALTER TABLE agents DROP COLUMN allowed_tools");
     await expect(store.migrate()).rejects.toThrow(/missing agents.allowed_tools/);
     expect((await pool.query("SELECT * FROM schema_migrations")).rows).toEqual([]);
+  }));
+});
+
+
+describe.skipIf(!url)("persisted agent rate policy", () => {
+  it("round trips limits, revisions and resetting to unlimited", async () => fixture(async (_pool, store) => {
+    await store.migrate();
+    const agent: Agent = { id: "limited", name: "limited", keyHash: "fake-fingerprint", allowedModels: ["*"], allowedTools: [], approvalTools: [], dailyBudget: 0, active: true, requestsPerMinute: 12, maxConcurrentRequests: 2 };
+    await store.createAgent(agent);
+    expect(await store.getAgent(agent.id)).toEqual(agent);
+    expect(await store.getPolicyRevision(policyRevision(agent).id)).toBe(policyRevision(agent).canonical);
+    const changed = await store.updateAgent(agent.id, { requestsPerMinute: 0, maxConcurrentRequests: 0 });
+    expect(changed?.requestsPerMinute ?? 0).toBe(0);
+    expect(changed?.maxConcurrentRequests ?? 0).toBe(0);
+    expect(policyRevision(changed!).id).toBe(policyRevision({ ...agent, requestsPerMinute: 0, maxConcurrentRequests: 0 }).id);
+    await store.migrate();
+    expect(await store.getAgent(agent.id)).toEqual(changed);
   }));
 });

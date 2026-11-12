@@ -16,6 +16,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- Optional per-agent rolling-minute and concurrency limits shared by model and MCP endpoints, with journaled refusals before budget reservation and Retry-After hints. Counters are process-local and reset on restart.
+
 - Standalone offline ledger verifier with independent hashing, complete M06 export validation, external checkpoint comparisons, and text or JSON output.
 
 - Sequence-paginated NDJSON ledger export with a captured head, external checkpoints, and checkpoint-aware verification; detection of truncation or replacement requires retaining a checkpoint outside the database.

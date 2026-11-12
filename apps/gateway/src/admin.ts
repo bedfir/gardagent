@@ -33,6 +33,8 @@ interface CreateAgentBody {
   allowedTools?: unknown;
   approvalTools?: unknown;
   dailyBudgetUsd?: unknown;
+  requestsPerMinute?: unknown;
+  maxConcurrentRequests?: unknown;
   unlimited?: unknown;
 }
 
@@ -121,6 +123,8 @@ function publicAgent(agent: Agent, spentToday: number, reservedToday = 0) {
     allowedTools: agent.allowedTools,
     approvalTools: agent.approvalTools,
     dailyBudgetUsd: agent.dailyBudget / 1_000_000,
+    requestsPerMinute: agent.requestsPerMinute ?? 0,
+    maxConcurrentRequests: agent.maxConcurrentRequests ?? 0,
     spentTodayUsd: spentToday / 1_000_000,
     reservedTodayUsd: reservedToday / 1_000_000,
     active: agent.active,
@@ -211,6 +215,10 @@ export function registerAdmin(app: FastifyInstance, deps: { config: GatewayConfi
 
     admin.post("/admin/agents", async (request, reply) => {
       const body = (request.body ?? {}) as CreateAgentBody;
+      for (const field of ["requestsPerMinute", "maxConcurrentRequests"] as const) {
+        const value = body[field];
+        if (value !== undefined && (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0 || value > 2147483647)) return reply.code(400).send({ error: `${field} must be a non-negative integer at most 2147483647 (0 means unlimited).` });
+      }
       const name = typeof body.name === "string" ? body.name.trim() : "";
       const models = Array.isArray(body.allowedModels) ? body.allowedModels.filter((m) => typeof m === "string") : [];
       const budget = body.dailyBudgetUsd;
@@ -245,6 +253,8 @@ export function registerAdmin(app: FastifyInstance, deps: { config: GatewayConfi
         allowedTools: tools,
         approvalTools,
         dailyBudget: budgetMicro.micro,
+        requestsPerMinute: body.requestsPerMinute as number | undefined,
+        maxConcurrentRequests: body.maxConcurrentRequests as number | undefined,
         active: true,
       };
       await store.createAgent(agent, { ...auditInput("admin.agent.create", agent.id, null, {
@@ -274,6 +284,10 @@ export function registerAdmin(app: FastifyInstance, deps: { config: GatewayConfi
       if (!current) return reply.code(404).send({ error: "Agent not found." });
 
       const body = (request.body ?? {}) as Record<string, unknown>;
+      for (const field of ["requestsPerMinute", "maxConcurrentRequests"] as const) {
+        const value = body[field];
+        if (value !== undefined && (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0 || value > 2147483647)) return reply.code(400).send({ error: `${field} must be a non-negative integer at most 2147483647 (0 means unlimited).` });
+      }
       const patch: AgentPatch = {};
       if ("name" in body) {
         if (typeof body.name !== "string" || !body.name.trim()) {
@@ -311,6 +325,9 @@ export function registerAdmin(app: FastifyInstance, deps: { config: GatewayConfi
         if (typeof body.active !== "boolean") return reply.code(400).send({ error: "« active » must be a boolean." });
         patch.active = body.active;
       }
+      for (const field of ["requestsPerMinute", "maxConcurrentRequests"] as const) {
+        if (body[field] !== undefined) patch[field] = body[field] as number;
+      }
       if (Object.keys(patch).length === 0) {
         return reply.code(400).send({ error: "Provide at least one field to update." });
       }
@@ -318,6 +335,9 @@ export function registerAdmin(app: FastifyInstance, deps: { config: GatewayConfi
       // Keep (and log) only what actually changes.
       const changed: AgentPatch = {};
       const fields: string[] = [];
+      for (const field of ["requestsPerMinute", "maxConcurrentRequests"] as const) {
+        if (patch[field] !== undefined && patch[field] !== (current[field] ?? 0)) { changed[field] = patch[field]; fields.push(field); }
+      }
       if (patch.name !== undefined && patch.name !== current.name) {
         changed.name = patch.name;
         fields.push("name");

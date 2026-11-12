@@ -6,6 +6,8 @@ export interface Agent {
   allowedTools: string[];
   approvalTools: string[];
   dailyBudgetUsd: number;
+  requestsPerMinute?: number;
+  maxConcurrentRequests?: number;
   /** Today's spend (UTC) in dollars. */
   spentTodayUsd: number;
   /** Budget held by in-flight requests, in dollars. */

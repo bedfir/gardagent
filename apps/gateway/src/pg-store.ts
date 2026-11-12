@@ -16,6 +16,8 @@ interface AgentRow {
   allowed_tools: string[] | null;
   approval_tools: string[] | null;
   daily_budget: string;
+  requests_per_minute: number | null;
+  max_concurrent_requests: number | null;
   active: boolean;
 }
 
@@ -51,6 +53,8 @@ function toAgent(row: AgentRow): Agent {
     allowedTools: row.allowed_tools ?? [],
     approvalTools: row.approval_tools ?? [],
     dailyBudget: Number(row.daily_budget),
+    ...(row.requests_per_minute ? { requestsPerMinute: row.requests_per_minute } : {}),
+    ...(row.max_concurrent_requests ? { maxConcurrentRequests: row.max_concurrent_requests } : {}),
     active: row.active,
   };
 }
@@ -270,8 +274,8 @@ export class PgStore implements Store {
     await this.transaction(async (client) => {
       const rev = await this.rememberPolicy(client, agent);
       await client.query(
-        "INSERT INTO agents (id, name, key_hash, allowed_models, allowed_tools, approval_tools, daily_budget, active, policy_rev) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)",
-        [agent.id, agent.name, agent.keyHash, agent.allowedModels, agent.allowedTools, agent.approvalTools, agent.dailyBudget, agent.active, rev]);
+        "INSERT INTO agents (id, name, key_hash, allowed_models, allowed_tools, approval_tools, daily_budget, active, policy_rev, requests_per_minute, max_concurrent_requests) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)",
+        [agent.id, agent.name, agent.keyHash, agent.allowedModels, agent.allowedTools, agent.approvalTools, agent.dailyBudget, agent.active, rev, agent.requestsPerMinute || null, agent.maxConcurrentRequests || null]);
       if (audit) await insertChained(client, { ...audit, policyRev: rev });
     });
   }
@@ -297,6 +301,8 @@ export class PgStore implements Store {
       if (patch.allowedModels !== undefined) set("allowed_models", patch.allowedModels);
       if (patch.allowedTools !== undefined) set("allowed_tools", patch.allowedTools);
       if (patch.approvalTools !== undefined) set("approval_tools", patch.approvalTools);
+      if (patch.requestsPerMinute !== undefined) set("requests_per_minute", patch.requestsPerMinute || null);
+      if (patch.maxConcurrentRequests !== undefined) set("max_concurrent_requests", patch.maxConcurrentRequests || null);
       if (patch.dailyBudget !== undefined) set("daily_budget", patch.dailyBudget);
       if (patch.active !== undefined) set("active", patch.active);
       set("policy_rev", rev);
