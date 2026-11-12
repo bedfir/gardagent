@@ -3,7 +3,9 @@
 Versioned startup no longer replays the SQL measured below. A complete unversioned 0.3.0 database is adopted using
 catalog reads plus a version record; no application table DDL, index build or trigger replacement runs. Subsequent
 starts read migration metadata. A session advisory lock serializes the full migration sequence; each numbered
-migration commits independently. Metadata creation and recording take locks on `schema_migrations` only.
+migration commits independently. Baseline adoption records metadata without application DDL. Later steps (currently 2–4) alter application tables
+and populate policy snapshots, so the full upgrade can take application-table locks. Versioned restarts with no
+pending steps create/check migration metadata but do not replay application DDL.
 
 Fresh installations still execute ordinary index builds and initial table/trigger creation in one transaction,
 with locks held until commit. There are no existing ledger rows to scan in that case. An incomplete legacy schema

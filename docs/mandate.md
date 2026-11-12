@@ -8,7 +8,7 @@ approval attribution. Migration 3 adopts existing agents without changing histor
 
 - **Agent**: an automated caller holding an agent key (`ga_…`). It acts under one policy at a time.
 - **Policy**: the limits of an agent: allowed models, allowed tools, tools that need approval, daily budget, and
-  whether the agent is active.
+  whether the agent is active, and optional rolling-minute and concurrency limits.
 - **Policy revision**: an immutable snapshot of a policy, identified by a hash.
 - **Operator**: a party that administers Gardagent (creates agents, changes policy, decides approvals). Authenticated by
   an operator token.
@@ -46,6 +46,9 @@ A policy revision is created every time an agent is created or its policy change
   { "v": 1, "allowedModels": [...], "allowedTools": [...], "approvalTools": [...],
     "dailyBudget": <micro-USD integer>, "active": <boolean> }
   ```
+
+  Positive `requestsPerMinute` and `maxConcurrentRequests` are included as optional integer keys. Zero/unset
+  limits are omitted so existing unlimited policy hashes remain unchanged; see [rate-limits.md](rate-limits.md).
 
   The three lists are sorted and de-duplicated before hashing, so that reordering a list is not a new revision. The
   agent's name and key are not part of the policy. The classification of MCP tools as read or write is part of the MCP

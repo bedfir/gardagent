@@ -165,7 +165,7 @@ returns `lastVersion` with a successful result, including for an empty range. Pa
 carry this state alongside the preceding hash across pages. Independent partial verification defaults to version 1
 and checks version ordering only within the supplied range.
 The action-specific approval checks below belong to the gateway verifier implemented with M05; they are not
-performed by core verification. Until M05, a version 2 marker alone makes no claim that mandate metadata is populated.
+performed by core verification. A version 2 marker alone does not establish that every optional mandate field is populated; historical references may be unavailable.
 
 For entries of format version 2 (these are checks on content, in addition to the chain rule of section 1.4):
 
@@ -185,7 +185,7 @@ For entries of format version 2 (these are checks on content, in addition to the
 ### 2.4 Compatibility impact
 
 - Version 1 data: unchanged, verified unchanged. A test (M04) must verify the same fixtures with the version 2 code.
-- Old verifier on new data: a 0.3.0 verifier recomputes the hash from every present key, so it still computes the right
+- Old verifier on new data: a 0.3.0 verifier given complete serialized JSON entries recomputes the hash from every present key, so it still computes the right
   hash for version 2 entries and reports a valid chain; it simply does not check the companion rules. This is the
   reason new fields are hashed rather than stored outside the hash.
 - The CSV export columns do not change in version 2 (see [compatibility.md](compatibility.md)).

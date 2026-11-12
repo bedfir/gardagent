@@ -18,13 +18,16 @@ configuration; the agent's code does not change.
 
 - **One identity per agent**: each agent has its own `ga_...` key; the real provider key stays inside the gateway.
 - **Atomic daily budgets**: the budget is reserved before each call and settled after it, so concurrent and streaming
-  requests cannot exceed the cap.
+  admissions are checked against spend plus reserved estimates.
 - **Human approval of MCP tools**: tools that write, or that you list, wait for an administrator's decision before they run.
 - **Append-only, hash-chained ledger**: every action is recorded with SHA-256 fingerprints (not content); the database
   rejects updates and deletes, and an endpoint verifies the whole chain.
 - **`observe` and `enforce` modes**: measure what the rules would block before blocking it.
 - **OpenAI compatibility** and **Anthropic format-compatible, not yet verified against the provider** ([verification](tools/anthropic/README.md)): `POST /v1/chat/completions` and `POST /v1/messages`, streaming included.
-- **MCP proxy**: governs `tools/call` on Streamable HTTP MCP servers, without exposing their credentials to agents.
+- **MCP proxy**: explicit governance of Streamable HTTP messages, filtered capabilities and tool listings, and default refusal of unsupported methods ([matrix](docs/mcp-matrix.md)).
+- **Named operators and immutable policy revisions**: admission and approval evidence records credential attribution ([limits](docs/mandate.md)).
+- **Optional per-agent limits**: rolling-minute admissions and concurrent responses, shared across endpoints ([details](docs/rate-limits.md)).
+- **Offline verification and external checkpoints**: [export and verify](docs/verify.md) independently of the database.
 - **Admin API and console** (Vue 3, French and English): agents, spend, ledger browsing and filtering, CSV export, integrity check.
 
 ## Local quickstart
@@ -184,11 +187,11 @@ What Gardagent is designed to guarantee, for traffic that goes through it:
 
 - Agents never see the provider key or the MCP server credentials; each agent has its own revocable key (disabling an
   agent or rotating its key takes effect at once).
-- A request is refused unless the agent is active and the model is in its allow-list; an MCP `tools/call` is refused unless
+- In enforce mode, a request is refused unless the agent is active and the model is in its allow-list; an MCP `tools/call` is refused unless
   the tool is in the agent's `allowedTools`. Write tools wait for human approval.
-- Daily budgets are reserved atomically before the call, so concurrent or streaming requests cannot exceed the cap.
+- In enforce mode, daily budget admission checks atomically include existing spend and reserved estimates. Actual usage can exceed an estimate; this is not a hard cap on provider charges.
 - Every governed action, and every administrative change, is recorded in an append-only ledger that the database refuses
-  to update or delete, hash-chained so that `GET /admin/ledger/verify` detects a modified or removed row. The ledger stores
+  to update or delete, hash-chained so that `GET /admin/ledger/verify` detects broken hashes, links or sequence continuity. The ledger stores
   fingerprints of requests and responses, not their content.
 - By default, if the ledger cannot be written the request is refused (fail-closed); it is not served without a trace.
 - The admin token must be at least 32 characters, and failed authentications are rate-limited per source address.
@@ -199,9 +202,10 @@ What it does **not** guarantee:
   prompt injection). Anything an agent is allowed to do, it can do.
 - It only governs traffic that passes through it. An agent that can reach a provider or an MCP server directly can bypass it.
 - The chain is tamper-evident, not tamper-proof: someone with administrative access to the database can still alter it, and
-  the chain head is not anchored outside the database, so a full rewrite would verify as valid.
+  internal verification alone accepts a self-consistent rewrite or truncated tail. Retain checkpoints outside the database
+  to detect changes relative to their committed prefix; later entries need a later checkpoint.
 - Costs are computed from the usage reported by the provider and the prices you configure; they are not the provider's invoice.
-- There is a single shared admin token: no users, roles or per-administrator audit trail.
+- Named operator tokens and bootstrap identify the credential used, not a human. There is no SSO or fine-grained role system; only bootstrap manages operators.
 - The root Compose file serves plain HTTP on loopback. TLS and an administration allow-list come from the `deploy/` stack.
 - It is not a functional-safety system and must not be used in a safety loop (see [docs/industrial-setup.md](docs/industrial-setup.md)).
 
@@ -209,12 +213,12 @@ To report a vulnerability, see [SECURITY.md](SECURITY.md).
 
 ## Known limitations
 
-- MCP governance covers `tools/call` only. Every other JSON-RPC method on `/mcp/<server>` (`resources/read`,
-  `resources/list`, `prompts/get`, `initialize`, ...) is relayed with no rule check and no ledger row. Only the Streamable
-  HTTP transport is supported, and JSON-RPC batches are rejected.
-- There is no per-agent rate limiting; only daily budgets cap an agent. Other protocols (for example A2A) are not supported.
-- Schema migrations run at startup, in one transaction, without `CONCURRENTLY`: the gateway serves no traffic while they
-  run, and index builds block writes. Measurements on a large ledger are in [docs/migration-timing.md](docs/migration-timing.md).
+- MCP supports Streamable HTTP POST only; GET/DELETE, batches, resources and prompts are refused in enforce mode.
+  Observe mode relays policy violations with evidence; malformed framing remains refused. See the [matrix](docs/mcp-matrix.md).
+- Per-agent rate counters live in one process and reset on restart. Multi-instance deployment and other protocols
+  (for example A2A) are unsupported. Limits are optional and default to unlimited.
+- Numbered schema migrations run at startup, one transaction per step under an advisory lock, before serving traffic.
+  Reruns do not replay application DDL; new DDL can block. [Historical timings](docs/migration-timing.md) are not v1 timings.
 - The failed-authentication limiter lives in the memory of one process: counters reset on restart and are not shared between
   gateway instances.
 - A request carrying a well-formed but wrong agent key is read in full (up to 10 MiB) before it is rejected, until the
@@ -230,6 +234,7 @@ To report a vulnerability, see [SECURITY.md](SECURITY.md).
 
 ## Documentation
 
+- [Upgrade from 0.3.0](docs/upgrade-0.3-to-1.0.md) and [v1 readiness evidence and gaps](docs/v1-readiness.md)
 - [docs/README.md](docs/README.md): index of the documentation
 - [docs/self-hosting.md](docs/self-hosting.md) and [deploy/README.md](deploy/README.md): running Gardagent on your own host
 - [docs/reference.md](docs/reference.md): MCP governance, modes, outage handling, approvals, admin API, console
@@ -241,4 +246,5 @@ To report a vulnerability, see [SECURITY.md](SECURITY.md).
 Gardagent is young software. The test suite is extensive and the gateway has been exercised end to end on a test server
 with test traffic (reports in [docs/](docs/README.md)), but it has not been through production use or an independent
 security review. Interfaces and configuration may change between releases; read the [CHANGELOG](CHANGELOG.md) before
-upgrading. Bug reports, questions and contributions are welcome.
+upgrading; the [compatibility policy](docs/compatibility.md) applies from 1.0. The v1 tag remains a human action
+and requires independent users. Bug reports, questions and contributions are welcome.

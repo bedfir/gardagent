@@ -6,7 +6,7 @@ English version: [README.md](README.md)
 
 Gardagent est une passerelle de gouvernance auto-hébergée. Elle se place entre vos agents IA et leurs fournisseurs de
 modèles ou serveurs MCP, et applique à chaque appel une identité par agent, des règles, des budgets et un journal
-dont toute altération est détectable.
+à empreintes chaînées, vérifiable par rapport à un point de contrôle conservé hors de la base.
 
 Ce fichier est un résumé en français. Le [README anglais](README.md) est la référence complète (tableau de toutes les
 variables d'environnement, schéma d'architecture, modèle de sécurité, limites connues) et la documentation détaillée est
@@ -16,14 +16,16 @@ en anglais dans [docs/](docs/README.md).
 
 - **une identité par agent** : chaque agent a sa propre clé `ga_…` ; la vraie clé du fournisseur reste dans la passerelle ;
 - **des budgets journaliers atomiques** : le budget est réservé avant l'appel et réglé après, donc des requêtes simultanées
-  ou en streaming ne peuvent pas dépasser le plafond ;
+  ou en streaming sont admises selon la dépense et les estimations déjà réservées ; le coût réel peut dépasser une estimation ;
 - **la validation humaine des outils MCP** : les outils en écriture, ou ceux que vous désignez, attendent la décision d'un
   administrateur ;
 - **un journal chaîné en ajout seul** : chaque action est enregistrée avec des empreintes SHA-256 (pas le contenu), la base
   refuse toute modification ou suppression, et un point d'accès vérifie toute la chaîne ;
 - **les modes `observe` et `enforce`** : mesurer ce que les règles bloqueraient avant de bloquer ;
 - **compatibilité OpenAI et format Anthropic, pas encore vérifié auprès du fournisseur** ([vérification](tools/anthropic/README.md)) (`POST /v1/chat/completions`, `POST /v1/messages`, streaming compris) et **proxy MCP**
-  (outils `tools/call`) ;
+  (méthodes explicites, listes filtrées et refus par défaut en mode `enforce`) ;
+- des jetons nominatifs d’opérateurs, des révisions immuables de politique et des approbations corrélées ;
+- des limites optionnelles de débit et de concurrence par agent ;
 - une API d'administration et une console web (français et anglais).
 
 ## Démarrage local
@@ -105,13 +107,13 @@ pnpm report --url http://127.0.0.1:8080 --days 7 --out report.md   # --days : 1 
 
 La liste complète est dans le [README anglais](README.md#known-limitations). Les principales :
 
-- la gouvernance MCP ne couvre que `tools/call` ; les autres méthodes (`resources/read`, `prompts/get`, …) sont relayées
-  sans règle ni ligne de journal ;
-- pas de limitation de débit par agent (seuls les budgets journaliers plafonnent) ;
-- le limiteur d'échecs d'authentification vit dans la mémoire d'un seul processus ;
-- les migrations de schéma s'exécutent au démarrage, sans `CONCURRENTLY` ;
-- toute altération du journal est détectable, mais il n'est pas infalsifiable : un administrateur de la base peut le réécrire, et la
-  tête de chaîne n'est pas ancrée à l'extérieur ;
+- seul le transport MCP Streamable HTTP POST est pris en charge ; ressources, prompts, GET, DELETE et lots sont refusés
+  en mode `enforce` ; le mode `observe` relaie les violations de politique en les journalisant ;
+- les limites de débit, de concurrence et d'échecs d'authentification vivent dans un seul processus et sont réinitialisées au redémarrage ;
+- les migrations numérotées s'exécutent au démarrage sous verrou, dans une transaction par étape ; leur répétition ne reconstruit pas les index ;
+- une réécriture cohérente ou une troncature de fin ne se détecte que par rapport à un point de contrôle conservé hors de la base ;
+  les entrées postérieures à ce point nécessitent un nouvel ancrage ;
+- un jeton d'opérateur prouve sa possession, pas l'identité d'une personne ; pas de SSO ni de rôles détaillés ;
 - la passerelle ne filtre pas le contenu des requêtes et ne gouverne que le trafic qui passe par elle ;
 - le fichier `docker-compose.tailscale.yml` n'a pas été testé, et la console n'envoie pas d'en-tête Content-Security-Policy.
 
@@ -119,6 +121,10 @@ La liste complète est dans le [README anglais](README.md#known-limitations). Le
 
 Logiciel jeune : testé de bout en bout sur un serveur de test, jamais utilisé en production ni soumis à une revue de
 sécurité indépendante. Les interfaces peuvent changer entre versions ; lisez le [CHANGELOG](CHANGELOG.md) avant de mettre à jour.
+
+La [mise à niveau depuis 0.3.0](docs/upgrade-0.3-to-1.0.md) et le [bilan v1](docs/v1-readiness.md)
+détaillent les preuves et les vérifications restantes. La compatibilité est définie à partir de 1.0 dans
+[la politique dédiée](docs/compatibility.md). Le tag v1 est une action humaine et exige des utilisateurs indépendants.
 
 ## Liens
 

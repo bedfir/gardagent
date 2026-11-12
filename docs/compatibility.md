@@ -5,7 +5,7 @@ treated as the baseline: 0.3.0 is the reference, and a change to any of them nee
 follow semantic versioning: a breaking change to a stable surface needs a new major version.
 
 "Compatible" is defined per surface below. In every case the test is the same: *a client, a verifier or a database
-written against 1.0 keeps working against every later 1.x.* Each stable surface has a contract test (section 8).
+written against 1.0 keeps working against every later 1.x.* Selected contracts are tested as described in section 9; the tests are not exhaustive.
 
 ## 1. HTTP API
 
@@ -20,8 +20,9 @@ response fields; the HTTP status codes and the machine-readable error codes in s
 | Admin API (bearer operator token) | `POST /admin/agents`, `GET /admin/agents`, `PATCH /admin/agents/:id`, `POST /admin/agents/:id/rotate-key`, `GET /admin/spend-check`, `GET /admin/approvals`, `POST /admin/approvals/:id/approve`, `POST /admin/approvals/:id/reject`, `GET /admin/stats`, `GET /admin/ledger`, `GET /admin/ledger/facets`, `GET /admin/ledger/export.csv`, `GET /admin/ledger/verify` |
 | Health | `GET /health` |
 
-Endpoints and operations added by later missions (operators, policy revisions, ledger export and checkpoints) are stable
-from the release that introduces them, under the same rules.
+The same rules cover `POST /admin/operators`, `GET /admin/operators`, `POST /admin/operators/:id/revoke`,
+`GET /admin/policy-revisions/:id`, `GET /admin/ledger/export.ndjson`, `GET /admin/ledger/checkpoint` and
+`POST /admin/ledger/verify`. Bootstrap alone manages operator creation/revocation; named tokens authenticate other admin operations.
 
 **Compatible change (allowed in a minor or patch release):**
 
@@ -46,15 +47,16 @@ Stable, because clients branch on them:
 
 | Where | Stable values |
 | --- | --- |
-| `error.code` on `/v1/chat/completions` (body `{ "error": { "message", "type", "code" } }`) | `invalid_api_key` (401), `missing_model` (400), `model_not_allowed` (403), `agent_disabled` (403), `budget_exceeded` (429), `ledger_unavailable` (503), `agent_unverifiable_during_outage` (503), `upstream_unreachable` (502) |
+| `error.code` on `/v1/chat/completions` (body `{ "error": { "message", "type", "code" } }`) | `invalid_api_key` (401), `missing_model` (400), `model_not_allowed` (403), `agent_disabled` (403), `budget_exceeded` (429), `ledger_unavailable` (503), `agent_unverifiable_during_outage` (503), `upstream_unreachable` (502), `rate_limited` (429 with `Retry-After`) |
 | `error.type` on `/v1/chat/completions` | `invalid_request_error`, `gardagent_policy`, `api_error` |
 | `error.type` on `/v1/messages` (body `{ "type": "error", "error": { "type", "message", "code"? } }`) | `authentication_error`, `permission_error`, `rate_limit_error`, `api_error`, `invalid_request_error` |
-| JSON-RPC `error.code` on `/mcp/:server` | `-32600` (invalid request), `-32602` (missing tool name), `-32603` (internal), `-32000` (gateway refusal: key, unknown server, ledger, unreachable), `-32001` (tool not allowed), `-32002` (approval rejected or timed out), `-32003` (approval unavailable during outage). Added by M08: `-32601` for refused methods |
-| Admin API | the HTTP status (`400`, `401`, `404`, `409`); the body is `{ "error": "<text>" }` |
+| JSON-RPC `error.code` on `/mcp/:server` | `-32600` (invalid request), `-32602` (missing tool name), `-32603` (internal), `-32000` (gateway refusal: key, unknown server, ledger, unreachable), `-32001` (tool not allowed), `-32002` (approval rejected or timed out), `-32003` (approval unavailable during outage). `-32601` (refused methods), `-32004` (rate limited, currently HTTP 200 with `Retry-After`) |
+| Admin API | the HTTP status (`400`, `401`, `403`, `404`, `409`, and authentication-limit `429`); the body is `{ "error": "<text>" }` |
 
 The `message` / `error` text is **not** stable. Provider errors (`upstream_error`, any status the provider returns) are
-relayed unchanged and are the provider's contract, not Gardagent's. The rate limit added by M09 answers HTTP 429 with a
-`Retry-After` header and a new error code, stable from that release.
+relayed unchanged and are the provider's contract, not Gardagent's. Model rate refusals answer HTTP 429 with `Retry-After` and `rate_limited`. MCP requests currently use HTTP 200
+with `-32004` and `Retry-After`; notifications use HTTP 429 with an empty body. This status mismatch remains a
+[readiness gap](v1-readiness.md), not a claim that the HTTP 429 exit criterion is satisfied.
 
 ## 3. Agent key format
 
@@ -95,8 +97,8 @@ Not stable: indexes (they may be added, changed or removed), and the layout of t
 (idempotency keys, settlement keys, reservations). External tools may read `ledger`, `agents` (except `key_hash`
 semantics), `approvals` and `agent_spend`; they MUST NOT write to the database.
 
-Downgrade is not supported: a database migrated by 1.x must not be opened by an older binary; the upgrade guide (M14)
-says to restore a backup instead.
+Downgrade is not supported: a database migrated by 1.x must not be opened by an older binary; the [upgrade guide](upgrade-0.3-to-1.0.md)
+requires restoring a matched backup and executable instead.
 
 ## 6. Environment variables
 
@@ -140,7 +142,7 @@ patch release, with the reason stated in the changelog.
 | --- | --- |
 | Ledger format version 1 | `apps/gateway/test/contracts.test.ts` verifies the golden entries in `test/fixtures/contracts/` with the current code and with an independent implementation of [ledger-format.md](ledger-format.md). It fails if a version 1 entry stops verifying. |
 | HTTP API (model endpoints, admin) | The same test compares the shape of live responses to the golden request/response samples. |
-| Database schema | Migration tests of M03 (fresh install, adoption of a 0.3.0 database, re-run, failure, restore). |
-| Format version 2 | M04 extends the ledger contract test with version 2 fixtures; version 1 fixtures are never edited. |
+| Database schema | `apps/gateway/test/migrations.test.ts`: fresh install, populated 0.3.0 adoption, re-run, failure rollback and version refusal. Dump/restore rehearsal remains a [readiness gap](v1-readiness.md). |
+| Format version 2 | `packages/core/test/ledger.test.ts`, `apps/gateway/test/migrations.test.ts` and `packages/verify/test/verify.test.ts` exercise version 2 and mixed chains using constructed entries; the existing version 1 golden fixtures remain unchanged. |
 
 A golden fixture is only ever **added to**; changing or deleting one is a breaking change and needs a major version.

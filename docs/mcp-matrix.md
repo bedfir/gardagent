@@ -55,7 +55,7 @@ the gateway, not by silence.
 
 ## 3. Client-to-server notifications (have a `method`, no `id`)
 
-A notification has no response; the proxy answers HTTP 202 with an empty body when it accepts one, and HTTP 202 with no
+A notification has no JSON-RPC response; after authentication, framing and rate admission, the proxy answers HTTP 202 with an empty body when it accepts one, and HTTP 202 with no
 forwarding when it refuses one (a refusal cannot be an error response, because there is no id to answer). A refused
 notification is still journaled.
 
@@ -109,6 +109,10 @@ proxy limits that wait with the existing upstream timeout and ends the stream; t
 - Server messages are inspected in JSON responses as well as complete SSE events, including events split across network chunks. Only responses matching the initiating id are relayed. Malformed JSON, batches and mismatched responses are suppressed; JSON responses receive -32603. SSE comments and events without JSON data are suppressed. Non-JSON upstream HTTP errors become JSON-RPC errors rather than unclassified pass-through.
 - Declared server notifications are covered by the parent call's responseHash. Each suppressed server request or undeclared notification has its own zero-cost denial row. In observe mode it is relayed with an allowed row carrying observed:server_request_refused.
 - Observe mode retains unfiltered listings and initialization capabilities, recording observed:tool_not_allowed or observed:method_not_governed respectively. Only tools capabilities are advertised in enforce mode.
-- Notifications always receive empty HTTP 202 after journaling. An unexpected SSE response to a notification is cancelled and recorded as unexpected_notification_stream, never relayed.
+- After method admission, notifications receive empty HTTP 202 after journaling; authentication, framing, outage and rate-limit refusals can return other statuses (rate limits return 429). An unexpected SSE response to a notification is cancelled and recorded as unexpected_notification_stream, never relayed.
 - The existing approval-store outage refusal remains in observe mode: it cannot safely execute a write without the required durable approval state. Unsupported framing also remains refused in observe mode.
 - Legacy SSE paths have no route; other unsupported HTTP verbs use the framework's route refusal and are never forwarded.
+
+Per-agent rate refusals include `Retry-After`. MCP requests currently use HTTP 200 with
+JSON-RPC `-32004` and `retryAfter` data; notifications use HTTP 429 with an empty body.
+The request status is a [readiness gap](v1-readiness.md) against the HTTP 429 exit criterion.
