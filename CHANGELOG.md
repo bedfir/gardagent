@@ -33,6 +33,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Contracts for v1: `docs/compatibility.md` (what is stable and what compatible means), `docs/ledger-format.md` (ledger format version 1 as written by 0.3.0, and the version 2 specification), `docs/mandate.md` (operators, policy revisions, approvals) and `docs/mcp-matrix.md` (target governance of every MCP message). Documentation only: no behaviour change.
 - Golden fixtures under `test/fixtures/contracts/` (ledger entries and API samples produced by the real code) and a contract test that fails if a version 1 ledger entry no longer verifies.
 - Local Compose profile with Ollama, an authenticated first-run guide, runnable OpenAI and Anthropic SDK examples and an MCP approval example, with documentation drift checks.
+- Tagged image builds attach an SPDX SBOM and SLSA build provenance and sign the image index with keyless Sigstore signing; docs/verify-release.md documents digest-based verification and first-release checks. Publication remains unverified until a human runs the first tagged release.
 
 ### Fixed
 
