@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- PostgreSQL startup uses transactional numbered migrations under an advisory lock, adopts databases already complete at the 0.3.0 schema without replaying application DDL, and refuses newer schema versions.
+
 ### Added
 
 - Contracts for v1: `docs/compatibility.md` (what is stable and what compatible means), `docs/ledger-format.md` (ledger format version 1 as written by 0.3.0, and the version 2 specification), `docs/mandate.md` (operators, policy revisions, approvals) and `docs/mcp-matrix.md` (target governance of every MCP message). Documentation only: no behaviour change.
