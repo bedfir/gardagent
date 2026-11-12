@@ -97,6 +97,9 @@ Admin routes: `GET /admin/approvals?status=pending`, `POST /admin/approvals/:id/
 | `GET /admin/ledger/export.csv?from=YYYY-MM-DD&to=YYYY-MM-DD` | Export the ledger to CSV (optional inclusive bounds, UTC days). Accepts the same filters as `GET /admin/ledger` (below) |
 | `GET /admin/ledger?afterSeq=0&limit=100` | Read the ledger. Parameters: `afterSeq` and `beforeSeq` (exclusive bounds), `limit` (1000 max), `order=asc\|desc` (ascending by default; `order=desc&limit=100` returns the last 100 rows). Optional filters, combinable with each other, with the dates and with paging (AND): `agent` (agent id), `model` (exact model name), `verdict` (`allowed` or `denied`), `minCost` and `maxCost` (USD, inclusive, for example `0.25`), `from` and `to` (inclusive UTC days, `YYYY-MM-DD`). An invalid value (unknown verdict, negative or non-numeric cost, `minCost` above `maxCost`, a parameter given twice) is a 400; an empty parameter means no filter |
 | `GET /admin/ledger/facets` | Agents (`id`, `name`) and models present in the ledger, to populate filter selectors |
+| `GET /admin/ledger/export.ndjson` | Export sequence pages bounded by a captured head (see below) |
+| `GET /admin/ledger/checkpoint` | Capture a checkpoint for external storage (see below) |
+| `POST /admin/ledger/verify` | Verify the chain against an expected checkpoint supplied as the JSON body (see below) |
 | `GET /admin/ledger/verify` | Verify the full integrity of the ledger (always the whole chain: filters are ignored) |
 
 All `/admin` routes require `Authorization: Bearer <GARDAGENT_ADMIN_TOKEN>`.
@@ -142,3 +145,48 @@ pnpm --filter @gardagent/console build   # produces apps/console/dist
 
 - The budget is reserved atomically before each call and settled after it: an estimated cost (request size / 4 for input, plus `max_tokens`, `max_completion_tokens` or `GARDAGENT_DEFAULT_MAX_OUTPUT_TOKENS`, 1024 by default, for output) is held while the request is in flight, so concurrent or streaming requests cannot exceed the cap. The reservation is replaced by the real cost at the end (or released on error, abort or timeout) and expires on its own if the gateway crashes. `GET /admin/agents` exposes `reservedTodayUsd`. A budget of 0 means unlimited: agent creation requires an explicit positive `dailyBudgetUsd`, or `"dailyBudgetUsd": 0` together with `"unlimited": true` (a missing budget is a 400). `PATCH` still accepts 0; agents created before v0.3.0 keep whatever budget they have. The smallest positive budget is 0.000001 USD (1 micro-USD): a positive `dailyBudgetUsd` that would round to 0 (for example `0.0000001`) is refused with 400, on creation and on `PATCH`, so that a tiny budget can never turn into "no cap".
 - On `/v1/messages`, the request body is forwarded as-is: provider-specific parameters are neither filtered nor validated. Cache tokens are counted at the price of ordinary input tokens.
+
+### Ledger export and external checkpoints
+
+All three endpoints require admin authentication. They preserve historical entry
+fields and hashes; the checkpoint envelope version is independent of ledger entry
+format versions.
+
+- `GET /admin/ledger/checkpoint` returns
+  `{ "format": "gardagent-checkpoint-v1", "sequence": 42, "head_hash": "<64 lowercase hex characters>", "created_at": "<ISO timestamp>" }`.
+  The sequence and hash come from one committed head read. An empty ledger has
+  sequence 0 and the genesis hash (64 zeroes). The timestamp records when the
+  envelope was produced; it is not a signed timestamp.
+- `GET /admin/ledger/export.ndjson` returns `application/x-ndjson`, with a metadata
+  line followed by unmodified ledger entries in ascending sequence order. The first
+  line is `{ "type": "metadata", "checkpoint": { ... }, "nextAfterSeq": 1000 }`.
+  `limit` is an integer from 1 to 1000 (default 1000). `afterSeq` is exclusive and
+  defaults to 0. The first page captures the committed head. To continue, supply
+  `afterSeq=nextAfterSeq`, `headSequence=checkpoint.sequence` and
+  `headHash=checkpoint.head_hash` from the first page; keep those same head values
+  for every page. No entry beyond that head is returned even while writes continue.
+  `nextAfterSeq: null` means complete, including an empty ledger or a cursor at the
+  head. Each nonempty response ends with a newline. A continuation requires both
+  head parameters; malformed bounds return 400 and a missing or changed anchor
+  returns 409. No ledger filters apply. Keep the first page's checkpoint as the
+  export anchor; later pages regenerate the envelope timestamp. The existing CSV
+  endpoint is a separate display export and does not provide this protocol.
+- `POST /admin/ledger/verify` accepts the complete checkpoint object directly as
+  its JSON body. It verifies the current chain up to a head captured at request
+  start and adds `checkpointContained` to the existing verification response.
+  For example, `{ "valid": true, "checked": 45, "lastHash": "...",
+  "checkpointContained": true }` means that the valid captured chain contains the
+  expected sequence and hash. `valid: true, checkpointContained: false` means the
+  chain is internally valid but does not contain the expected anchor (including
+  truncation below it or replacement with a different valid chain). On an invalid
+  chain, membership is reported as false because it could not be established in a
+  valid full chain. Malformed or unsupported checkpoints return 400. The original
+  `GET /admin/ledger/verify` remains available without an expected checkpoint.
+
+Keep checkpoints **outside the database**, for example in a file on independent
+storage or printed. Internal hash verification alone cannot detect tail truncation
+or a complete valid rewrite. An externally retained checkpoint makes these changes
+detectable relative to its sequence and hash. It does not protect later entries
+that were never anchored, and it proves neither authorship nor a human identity.
+Export consistency assumes append-only writes; privileged concurrent changes to
+existing rows are outside the export consistency guarantee.

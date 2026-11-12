@@ -239,6 +239,11 @@ export class MemoryStore implements Store {
     return { ...entry };
   }
 
+  async ledgerHead(): Promise<{ sequence: number; head_hash: string }> {
+    const head = this.ledger.at(-1);
+    return { sequence: head?.seq ?? 0, head_hash: head?.hash ?? GENESIS_HASH };
+  }
+
   async listLedger(options: LedgerQuery = {}): Promise<LedgerEntry[]> {
     const after = options.afterSeq ?? 0;
     const before = options.beforeSeq ?? Number.POSITIVE_INFINITY;

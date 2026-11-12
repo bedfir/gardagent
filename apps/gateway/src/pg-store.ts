@@ -591,6 +591,11 @@ export class PgStore implements Store {
     }
   }
 
+  async ledgerHead(): Promise<{ sequence: number; head_hash: string }> {
+    const { rows } = await this.pool.query<{ seq: string; hash: string }>("SELECT seq, hash FROM ledger ORDER BY seq DESC LIMIT 1");
+    return { sequence: Number(rows[0]?.seq ?? 0), head_hash: rows[0]?.hash ?? GENESIS_HASH };
+  }
+
   async listLedger(options: LedgerQuery = {}): Promise<LedgerEntry[]> {
     // Sort direction comes from a closed list, never from input; every user value is a bound parameter.
     // Conditions are added only for the filters that are set (a static "$n IS NULL OR ..." form would keep the
