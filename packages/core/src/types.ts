@@ -248,6 +248,8 @@ export interface Store {
   aggregateLedger(sinceDay: string): Promise<LedgerAggregate[]>;
   /** Ledger rows, ascending by seq by default; afterSeq and beforeSeq are exclusive bounds. */
   listLedger(options?: LedgerQuery): Promise<LedgerEntry[]>;
+  /** Current committed head, or the genesis anchor for an empty ledger. */
+  ledgerHead(): Promise<{ sequence: number; head_hash: string }>;
   /**
    * Agents whose `agent_spend` for `day` (YYYY-MM-DD, UTC) differs from the sum of their ledger cost on that day.
    * Only divergent agents are returned, sorted by agent id. Read-only: nothing is repaired.

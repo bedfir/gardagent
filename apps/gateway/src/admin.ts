@@ -537,22 +537,74 @@ export function registerAdmin(app: FastifyInstance, deps: { config: GatewayConfi
       return reply.send(Readable.from(csvChunks(store, names, parsed.filters)));
     });
 
-    admin.get("/admin/ledger/verify", async () => {
+    const checkpointFormat = "gardagent-checkpoint-v1";
+    const checkpoint = async () => ({ format: checkpointFormat, ...await store.ledgerHead(), created_at: new Date().toISOString() });
+    function validCheckpoint(value: unknown): value is { format: string; sequence: number; head_hash: string; created_at: string } {
+      if (!value || typeof value !== "object") return false;
+      const c = value as Record<string, unknown>;
+      return c.format === checkpointFormat && Number.isSafeInteger(c.sequence) &&
+        (c.sequence as number) >= 0 && (c.sequence as number) < Number.MAX_SAFE_INTEGER &&
+        typeof c.head_hash === "string" && /^[0-9a-f]{64}$/.test(c.head_hash) &&
+        (c.sequence !== 0 || c.head_hash === GENESIS_HASH) &&
+        typeof c.created_at === "string" && Number.isFinite(Date.parse(c.created_at));
+    }
+
+    admin.get("/admin/ledger/checkpoint", async (_request, reply) => {
+      return reply.header("cache-control", "no-store").send(await checkpoint());
+    });
+
+    admin.get("/admin/ledger/export.ndjson", async (request, reply) => {
+      const q = request.query as Record<string, unknown>;
+      const integer = (v: unknown, fallback: number) => v === undefined ? fallback :
+        typeof v === "string" && /^(0|[1-9][0-9]*)$/.test(v) && Number.isSafeInteger(Number(v)) ? Number(v) : NaN;
+      const afterSeq = integer(q.afterSeq, 0);
+      const limit = integer(q.limit, PAGE);
+      const head = await checkpoint();
+      const sequence = integer(q.headSequence, head.sequence);
+      const hash = q.headHash ?? head.head_hash;
+      if (!Number.isSafeInteger(afterSeq) || !Number.isSafeInteger(sequence) || sequence >= Number.MAX_SAFE_INTEGER ||
+          afterSeq > sequence || !Number.isSafeInteger(limit) || limit < 1 || limit > PAGE ||
+          typeof hash !== "string" || !/^[0-9a-f]{64}$/.test(hash) ||
+          ((q.headSequence === undefined) !== (q.headHash === undefined)) ||
+          (afterSeq > 0 && q.headSequence === undefined)) {
+        return reply.code(400).send({ error: "Invalid export cursor, head or limit (1..1000)." });
+      }
+      const anchor = sequence === 0 ? GENESIS_HASH :
+        (await store.listLedger({ afterSeq: sequence - 1, beforeSeq: sequence + 1, limit: 1 }))[0]?.hash;
+      if (anchor !== hash) return reply.code(409).send({ error: "Export head is no longer present." });
+      const entries = await store.listLedger({ afterSeq, beforeSeq: sequence + 1, limit });
+      const last = entries.at(-1)?.seq ?? afterSeq;
+      const metadata = { type: "metadata", checkpoint: { ...head, sequence, head_hash: hash }, nextAfterSeq: last < sequence ? last : null };
+      return reply.header("cache-control", "no-store").type("application/x-ndjson")
+        .send([JSON.stringify(metadata), ...entries.map((entry) => JSON.stringify(entry))].join("\n") + "\n");
+    });
+
+    async function verify(expected?: { sequence: number; head_hash: string }) {
+      const head = await store.ledgerHead();
       let afterSeq = 0;
       let prevHash = GENESIS_HASH;
       let lastVersion: 1 | 2 = 1;
       let total = 0;
+      let contains = expected?.sequence === 0 && expected.head_hash === GENESIS_HASH;
       for (;;) {
-        const page = await store.listLedger({ afterSeq, limit: PAGE });
+        const page = await store.listLedger({ afterSeq, beforeSeq: head.sequence + 1, limit: PAGE });
         if (page.length === 0) break;
+        if (page[0]!.seq !== afterSeq + 1) return { valid: false, checked: total, brokenAtSeq: page[0]!.seq, problem: "seq_gap", ...(expected ? { checkpointContained: false } : {}) };
         const check = verifyChain(page, prevHash, lastVersion);
-        if (!check.valid) return { valid: false, checked: total, brokenAtSeq: check.brokenAtSeq, problem: check.problem };
+        if (!check.valid) return { valid: false, checked: total, brokenAtSeq: check.brokenAtSeq, problem: check.problem, ...(expected ? { checkpointContained: false } : {}) };
+        if (expected && page.some((e) => e.seq === expected.sequence && e.hash === expected.head_hash)) contains = true;
         total += page.length;
         prevHash = check.lastHash;
         lastVersion = check.lastVersion;
         afterSeq = page.at(-1)!.seq;
       }
-      return { valid: true, checked: total, lastHash: prevHash };
+      if (afterSeq !== head.sequence || prevHash !== head.head_hash) return { valid: false, checked: total, problem: "head_mismatch", ...(expected ? { checkpointContained: false } : {}) };
+      return { valid: true, checked: total, lastHash: prevHash, ...(expected ? { checkpointContained: contains } : {}) };
+    }
+    admin.get("/admin/ledger/verify", async () => verify());
+    admin.post("/admin/ledger/verify", async (request, reply) => {
+      if (!validCheckpoint(request.body)) return reply.code(400).send({ error: "Expected a gardagent-checkpoint-v1 checkpoint." });
+      return reply.header("cache-control", "no-store").send(await verify(request.body));
     });
   });
 }
