@@ -517,14 +517,16 @@ export function registerAdmin(app: FastifyInstance, deps: { config: GatewayConfi
     admin.get("/admin/ledger/verify", async () => {
       let afterSeq = 0;
       let prevHash = GENESIS_HASH;
+      let lastVersion: 1 | 2 = 1;
       let total = 0;
       for (;;) {
         const page = await store.listLedger({ afterSeq, limit: PAGE });
         if (page.length === 0) break;
-        const check = verifyChain(page, prevHash);
+        const check = verifyChain(page, prevHash, lastVersion);
         if (!check.valid) return { valid: false, checked: total, brokenAtSeq: check.brokenAtSeq, problem: check.problem };
         total += page.length;
         prevHash = check.lastHash;
+        lastVersion = check.lastVersion;
         afterSeq = page.at(-1)!.seq;
       }
       return { valid: true, checked: total, lastHash: prevHash };

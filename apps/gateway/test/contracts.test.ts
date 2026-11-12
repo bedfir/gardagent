@@ -206,6 +206,7 @@ function shape(value: unknown): unknown {
   if (typeof value === "object") {
     return Object.fromEntries(
       Object.entries(value as Record<string, unknown>)
+        .filter(([key]) => !(key === "formatVersion" && "seq" in value && "hash" in value))
         .sort(([a], [b]) => (a < b ? -1 : 1))
         .map(([k, v]) => [k, shape(v)]),
     );
@@ -271,7 +272,7 @@ describe("contract: ledger format version 1", () => {
   it("the golden entries verify with the current code", () => {
     expect(ledger.formatVersion).toBe(1);
     expect(ledger.entries.length).toBeGreaterThan(10);
-    expect(verifyChain(ledger.entries)).toEqual({ valid: true, count: ledger.entries.length, lastHash: ledger.head });
+    expect(verifyChain(ledger.entries)).toEqual({ valid: true, count: ledger.entries.length, lastHash: ledger.head, lastVersion: 1 });
     expect(ledger.entries[0]!.prevHash).toBe(GENESIS_HASH);
   });
 
@@ -355,7 +356,8 @@ describe("contract: HTTP API samples", () => {
     }
   });
 
-  it("the live ledger entries have the fixture's shape too", () => {
+  it("the live ledger adds version 2 to the historical shape", () => {
+    expect(live.ledger.entries.every((entry) => entry.formatVersion === 2)).toBe(true);
     expect(shape(live.ledger.entries.find((e) => e.action === "chat.completions"))).toEqual(
       shape(ledger.entries.find((e) => e.action === "chat.completions" && e.degraded === undefined)),
     );

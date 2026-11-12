@@ -60,6 +60,8 @@ describe("format helpers", () => {
     expect(reasonLabel("something_new")).toBe("something_new");
     expect(reasonLabel(null)).toBe("");
     expect(problemLabel("seq_gap")).toBe("ligne manquante");
+    expect(problemLabel("unsupported_format")).toBe("version du format du journal non prise en charge");
+    expect(problemLabel("invalid_format")).toBe("contenu ou ordre des versions du journal invalide");
     expect(problemLabel(undefined)).toBe("problème inconnu");
     expect(adminLabel("admin.agent.update", "name,dailyBudget,active")).toBe("Agent modifié : nom, budget, actif");
     expect(adminLabel("admin.agent.update", null)).toBe("Agent modifié");
@@ -86,6 +88,8 @@ describe("format helpers", () => {
     expect(reasonLabel("observed:unmapped")).toBe("unmapped (observed)");
     expect(problemLabel("link_mismatch")).toBe("broken chain");
     expect(problemLabel("hash_mismatch")).toBe("content modified");
+    expect(problemLabel("unsupported_format")).toBe("unsupported ledger format version");
+    expect(problemLabel("invalid_format")).toBe("invalid ledger content or version order");
     expect(problemLabel(undefined)).toBe("unknown problem");
     expect(adminLabel("admin.agent.update", "name,allowedModels,allowedTools,approvalTools,dailyBudget,active")).toBe(
       "Agent updated: name, models, MCP tools, tools requiring approval, budget, active",

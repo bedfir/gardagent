@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   canonicalJson,
+  MemoryStore,
   chainEntry,
   GENESIS_HASH,
   verifyChain,
@@ -40,11 +41,11 @@ describe("ledger chain", () => {
   it("accepts a valid chain", () => {
     const entries = buildChain(5);
     const check = verifyChain(entries);
-    expect(check).toEqual({ valid: true, count: 5, lastHash: entries[4]!.hash });
+    expect(check).toEqual({ valid: true, count: 5, lastHash: entries[4]!.hash, lastVersion: 1 });
   });
 
   it("accepts an empty chain", () => {
-    expect(verifyChain([])).toEqual({ valid: true, count: 0, lastHash: GENESIS_HASH });
+    expect(verifyChain([])).toEqual({ valid: true, count: 0, lastHash: GENESIS_HASH, lastVersion: 1 });
   });
 
   it("detects tampering (hash_mismatch)", () => {
@@ -68,7 +69,7 @@ describe("ledger chain", () => {
   it("verifies a portion from a known prevHash", () => {
     const entries = buildChain(6);
     const portion = entries.slice(3);
-    expect(verifyChain(portion, entries[2]!.hash)).toEqual({ valid: true, count: 3, lastHash: entries[5]!.hash });
+    expect(verifyChain(portion, entries[2]!.hash)).toEqual({ valid: true, count: 3, lastHash: entries[5]!.hash, lastVersion: 1 });
     expect(verifyChain(portion)).toMatchObject({ valid: false, brokenAtSeq: 4, problem: "link_mismatch" });
     expect(verifyChain(portion, "a".repeat(64))).toMatchObject({ valid: false, problem: "link_mismatch" });
   });
@@ -85,5 +86,71 @@ describe("canonicalJson", () => {
   it("keeps array order and ignores undefined keys", () => {
     expect(canonicalJson([2, 1])).not.toBe(canonicalJson([1, 2]));
     expect(canonicalJson({ a: 1, b: undefined })).toBe('{"a":1}');
+  });
+});
+
+
+describe("ledger format 2", () => {
+  it("verifies a historical prefix followed by a new writer entry", async () => {
+    const store = new MemoryStore();
+    const historical = chainEntry(1, GENESIS_HASH, input(1));
+    // Seed historical persisted state to exercise the upgrade boundary in the same store.
+    (store as unknown as { ledger: LedgerEntry[] }).ledger.push(historical);
+    const next = await store.appendLedger({ ...input(2), policyRev: "a".repeat(64), operatorId: "operator", approvalRef: "reference" });
+    expect(next.formatVersion).toBe(2);
+    const entries = await store.listLedger();
+    expect(entries[0]).toEqual(historical);
+    expect(entries[0]).not.toHaveProperty("formatVersion");
+    expect(verifyChain(entries).valid).toBe(true);
+    for (const key of ["policyRev", "operatorId", "approvalRef"] as const) {
+      expect(verifyChain([historical, { ...next, [key]: "tampered" }])).toMatchObject({ brokenAtSeq: 2, problem: "hash_mismatch" });
+    }
+    expect(verifyChain([historical, { ...next, formatVersion: 99 }])).toMatchObject({ brokenAtSeq: 2, problem: "unsupported_format" });
+    const { formatVersion: _version, ...withoutVersion } = next;
+    expect(verifyChain([historical, withoutVersion])).toMatchObject({ brokenAtSeq: 2, problem: "hash_mismatch" });
+  });
+
+  it("rejects rehashed invalid format content and version regression", () => {
+    const first = chainEntry(1, GENESIS_HASH, { ...input(1), formatVersion: 2 });
+    const old = chainEntry(2, first.hash, input(2));
+    expect(verifyChain([first, old])).toMatchObject({ brokenAtSeq: 2, problem: "invalid_format" });
+    for (const extra of [{ policyRev: "a".repeat(64) }, { operatorId: "operator" }, { approvalRef: "ref" }]) {
+      expect(verifyChain([chainEntry(1, GENESIS_HASH, { ...input(1), ...extra })])).toMatchObject({ problem: "invalid_format" });
+    }
+    for (const extra of [{ policyRev: "bad" }, { operatorId: "" }, { approvalRef: "" }, { degraded: false }]) {
+      expect(verifyChain([chainEntry(1, GENESIS_HASH, { ...input(1), formatVersion: 2, ...extra })])).toMatchObject({ problem: "invalid_format" });
+    }
+    expect(verifyChain([chainEntry(1, GENESIS_HASH, { ...input(1), formatVersion: 1 })])).toMatchObject({ problem: "unsupported_format" });
+  });
+});
+
+
+describe("ledger verification continuation", () => {
+  it("carries the version across pages and empty ranges", () => {
+    const historical = chainEntry(1, GENESIS_HASH, input(1));
+    const current = chainEntry(2, historical.hash, { ...input(2), formatVersion: 2 });
+    const prefix = verifyChain([historical, current]);
+    expect(prefix.valid).toBe(true);
+    if (!prefix.valid) throw new Error("Expected a valid prefix");
+    expect(prefix.lastVersion).toBe(2);
+    expect(verifyChain([], prefix.lastHash, prefix.lastVersion)).toEqual({
+      valid: true, count: 0, lastHash: current.hash, lastVersion: 2,
+    });
+    const next = chainEntry(3, current.hash, { ...input(3), formatVersion: 2 });
+    expect(verifyChain([next], prefix.lastHash, prefix.lastVersion)).toMatchObject({ valid: true, lastVersion: 2 });
+    const regression = chainEntry(3, current.hash, input(3));
+    expect(verifyChain([regression], prefix.lastHash, prefix.lastVersion)).toMatchObject({
+      valid: false, brokenAtSeq: 3, problem: "invalid_format",
+    });
+  });
+
+  it("treats undefined optional fields as absent from content and hashing", () => {
+    for (const formatVersion of [undefined, 2]) {
+      const entry = chainEntry(1, GENESIS_HASH, {
+        ...input(1), formatVersion, policyRev: undefined, operatorId: undefined,
+        approvalRef: undefined, degraded: undefined,
+      });
+      expect(verifyChain([entry])).toMatchObject({ valid: true, lastVersion: formatVersion ?? 1 });
+    }
   });
 });

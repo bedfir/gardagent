@@ -186,7 +186,7 @@ export class MemoryStore implements Store {
     const known = options.idempotencyKey === undefined ? undefined : this.ledgerKeys.get(options.idempotencyKey);
     if (known !== undefined) return { ...this.ledger[known - 1]! };
     const last = this.ledger.at(-1);
-    const entry = chainEntry((last?.seq ?? 0) + 1, last?.hash ?? GENESIS_HASH, input);
+    const entry = chainEntry((last?.seq ?? 0) + 1, last?.hash ?? GENESIS_HASH, { ...input, formatVersion: 2 });
     this.ledger.push(entry);
     if (options.idempotencyKey !== undefined) this.ledgerKeys.set(options.idempotencyKey, entry.seq);
     const s = options.settlement;

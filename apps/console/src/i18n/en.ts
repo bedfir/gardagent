@@ -98,6 +98,8 @@ export const en: Messages = {
   "problem.hash_mismatch": "content modified",
   "problem.link_mismatch": "broken chain",
   "problem.seq_gap": "missing row",
+  "problem.unsupported_format": "unsupported ledger format version",
+  "problem.invalid_format": "invalid ledger content or version order",
   "problem.unknown": "unknown problem",
 
   "ledger.title": "Ledger",
