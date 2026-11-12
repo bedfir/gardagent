@@ -7,3 +7,7 @@ dist/
 # Deployment secrets and backups
 deploy/.env
 deploy/backups/
+
+# Browser test artifacts
+playwright-report/
+test-results/

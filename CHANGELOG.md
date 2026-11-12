@@ -8,6 +8,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- Login validation errors follow the French/English language switch immediately.
+
 - MCP uses explicit method governance, journals non-tool traffic and refusals, filters capability listings, and screens server messages in JSON and SSE responses.
 
 - New ledger entries use format version 2 with hashed optional revision, operator and approval references; historical version 1 entries remain unchanged and unknown versions fail verification. Full-chain verification preserves version ordering across pages and the console labels format errors.
@@ -15,6 +17,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - PostgreSQL startup uses transactional numbered migrations under an advisory lock, adopts databases already complete at the 0.3.0 schema without replaying application DDL, and refuses newer schema versions.
 
 ### Added
+
+- Chromium browser tests against the built console and a real in-memory gateway cover authentication, agent creation, approval decisions, ledger filters, integrity verification and language switching; `pnpm test:e2e` also runs in CI.
 
 - Human-only, opt-in Anthropic verification harness and synthetic usage/cost tests for both response modes; cache counts use the configured input rate. Provider verification remains pending.
 

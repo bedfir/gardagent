@@ -133,7 +133,7 @@ List pages are capped at 1 000 rows (`limit=1000`), so the unfiltered and `allow
 | `GET /admin/ledger/export.csv?minCost=0.0001` | 200 | 749 lines (header + 748) | 748 |
 | `GET /admin/ledger/facets` without token | 401 | - | - |
 
-Not checked: the console pages themselves in a browser, the `model` filter, the combination of several filters in the list endpoint.
+At the time of this manual run, console pages in a browser, the model filter and combined list filters were not checked. The M11 Chromium suite now covers the built console against a real in-memory gateway: login and wrong-token refusal, agent listing and creation, approval and rejection, ledger filters, integrity results, and French/English switching. See [browser test coverage](../e2e/README.md) for scope and execution limits; historical manual results above are unchanged.
 
 ## 7. State left behind
 
