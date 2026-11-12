@@ -42,6 +42,10 @@ class FrozenStore extends MemoryStore {
   override releaseReservation(id: string) {
     return this.gate("release", () => super.releaseReservation(id));
   }
+  override createAgent(...args: Parameters<MemoryStore["createAgent"]>) {
+    // Audited creation appends inside the atomic operation, bypassing public appendLedger.
+    return args[1] ? this.gate("append", () => super.createAgent(...args)) : super.createAgent(...args);
+  }
   override appendLedger(input: LedgerInput, options?: { signal?: AbortSignal }): Promise<LedgerEntry> {
     this.appendSignals.push(options?.signal);
     return this.gate("append", () => super.appendLedger(input));
@@ -68,15 +72,18 @@ function liveStream(kind: "openai" | "anthropic", onFreeze: () => void): Respons
       ? [sse("message_delta", { type: "message_delta", delta: { stop_reason: "end_turn" }, usage: { output_tokens: 3 } }), sse("message_stop", { type: "message_stop" })]
       : [sse(null, { id: "s", choices: [], usage: { prompt_tokens: 7, completion_tokens: 3 } }), "data: [DONE]\n\n"];
   const stream = new ReadableStream<Uint8Array>({
-    async start(controller) {
-      for (const c of head) controller.enqueue(enc.encode(c));
-      await new Promise((r) => setTimeout(r, 60));
-      onFreeze(); // the database goes away while the stream is in flight
-      await new Promise((r) => setTimeout(r, 60));
+    // Each pull is observable demand from the gateway's stream reader.
+    // Freeze only after it has consumed the head; deliver the tail on its next read.
+    pull(controller) {
+      if (head.length) {
+        controller.enqueue(enc.encode(head.shift()!));
+        return;
+      }
+      onFreeze();
       for (const c of tail) controller.enqueue(enc.encode(c));
       controller.close();
     },
-  });
+  }, { highWaterMark: 0 });
   return new Response(stream, { status: 200, headers: { "content-type": "text/event-stream" } });
 }
 
@@ -116,12 +123,14 @@ describe.each([["fail-open" as Policy], ["fail-closed" as Policy]])("stream in f
         store.frozen = true;
       };
       const { key } = await createAgent(app, agentBody);
+      expect(store.calls.append).toBe(1);
+      expect(await store.listLedger()).toMatchObject([{ action: "admin.agent.create" }]);
       const started = Date.now();
       const res = kind === "openai" ? await postOpenAi(app, key, { ...chat, stream: true }) : await postAnthropic(app, key, { ...anthropicBody, stream: true });
       const elapsed = Date.now() - started;
       expect(res.statusCode).toBe(200);
       expect(res.body).toContain(kind === "openai" ? "[DONE]" : "message_stop");
-      // ~120 ms of stream + one bounded settlement. Before the fix this call never returned (frozen driver) or waited 3 x 5 s.
+      // Stream consumption plus one bounded settlement. Before the fix this call never returned (frozen driver) or waited 3 x 5 s.
       expect(elapsed).toBeLessThan(120 + CALL_TIMEOUT_MS + 500);
       expect(guard.dbKnownDown()).toBe(true);
       const rows = spooled();

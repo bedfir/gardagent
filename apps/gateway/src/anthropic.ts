@@ -77,7 +77,7 @@ export function registerAnthropic(app: FastifyInstance, deps: AnthropicDeps): vo
       return reply.code(400).send(anthropicError("invalid_request_error", "The « model » field is required."));
     }
 
-    const { ctx, denial } = await gov.admit(ACTION, agent, model, body);
+    const { ctx, denial } = await gov.admit(ACTION, agent, model, body, reply);
     if (denial) {
       const type = denial.status === 429 ? "rate_limit_error" : "permission_error";
       return reply.code(denial.status).send(anthropicError(type, denial.message));

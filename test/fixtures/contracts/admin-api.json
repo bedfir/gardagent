@@ -1,0 +1,613 @@
+{
+  "createAgent": {
+    "method": "POST",
+    "route": "/admin/agents",
+    "request": {
+      "name": "contract-bot",
+      "allowedModels": [
+        "gpt-4o-mini",
+        "claude-contract"
+      ],
+      "allowedTools": [
+        "gh/*"
+      ],
+      "approvalTools": [
+        "gh/search"
+      ],
+      "dailyBudgetUsd": 5
+    },
+    "status": 201,
+    "response": {
+      "agent": {
+        "id": "6ad0c0e2-04f9-406e-bba6-fbb29bb3a22d",
+        "name": "contract-bot",
+        "allowedModels": [
+          "gpt-4o-mini",
+          "claude-contract"
+        ],
+        "allowedTools": [
+          "gh/*"
+        ],
+        "approvalTools": [
+          "gh/search"
+        ],
+        "dailyBudgetUsd": 5,
+        "spentTodayUsd": 0,
+        "reservedTodayUsd": 0,
+        "active": true
+      },
+      "key": "ga_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+    }
+  },
+  "createAgentUnlimited": {
+    "method": "POST",
+    "route": "/admin/agents",
+    "request": {
+      "name": "contract-limited",
+      "allowedModels": [
+        "gpt-4o-mini"
+      ],
+      "allowedTools": [
+        "gh/search"
+      ],
+      "dailyBudgetUsd": 0,
+      "unlimited": true
+    },
+    "status": 201,
+    "response": {
+      "agent": {
+        "id": "e8052041-2801-4c1b-ba00-16d09bce7a19",
+        "name": "contract-limited",
+        "allowedModels": [
+          "gpt-4o-mini"
+        ],
+        "allowedTools": [
+          "gh/search"
+        ],
+        "approvalTools": [],
+        "dailyBudgetUsd": 0,
+        "spentTodayUsd": 0,
+        "reservedTodayUsd": 0,
+        "active": true
+      },
+      "key": "ga_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+    }
+  },
+  "createAgentTinyBudget": {
+    "method": "POST",
+    "route": "/admin/agents",
+    "request": {
+      "name": "contract-tiny",
+      "allowedModels": [
+        "gpt-4o-mini"
+      ],
+      "dailyBudgetUsd": 0.000001
+    },
+    "status": 201,
+    "response": {
+      "agent": {
+        "id": "4259c041-f909-499f-9e55-14e89c926090",
+        "name": "contract-tiny",
+        "allowedModels": [
+          "gpt-4o-mini"
+        ],
+        "allowedTools": [],
+        "approvalTools": [],
+        "dailyBudgetUsd": 0.000001,
+        "spentTodayUsd": 0,
+        "reservedTodayUsd": 0,
+        "active": true
+      },
+      "key": "ga_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+    }
+  },
+  "createAgentRejected": {
+    "method": "POST",
+    "route": "/admin/agents",
+    "request": {
+      "name": ""
+    },
+    "status": 400,
+    "response": {
+      "error": "The « name » field is required."
+    }
+  },
+  "unauthorized": {
+    "method": "GET",
+    "route": "/admin/agents",
+    "request": null,
+    "status": 401,
+    "response": {
+      "error": "Invalid admin token."
+    }
+  },
+  "approveApproval": {
+    "method": "POST",
+    "route": "/admin/approvals/:id/approve",
+    "request": null,
+    "status": 200,
+    "response": {
+      "approval": {
+        "id": "b7a6a112-d14b-4025-bf4e-59733e8a7963",
+        "createdAt": "2026-11-12T00:03:12.326Z",
+        "agentId": "6ad0c0e2-04f9-406e-bba6-fbb29bb3a22d",
+        "server": "gh",
+        "tool": "search",
+        "argsHash": "e0cecf09f5231fa47194c5e16ee23d478c4f26bc92d19ed81b7c6340564b7cb2",
+        "argsSummary": "q=\"contract\"",
+        "status": "approved",
+        "decidedAt": "2026-11-12T00:03:12.337Z",
+        "reason": null,
+        "accessClass": "read"
+      }
+    }
+  },
+  "listAgents": {
+    "method": "GET",
+    "route": "/admin/agents",
+    "request": null,
+    "status": 200,
+    "response": {
+      "agents": [
+        {
+          "id": "6ad0c0e2-04f9-406e-bba6-fbb29bb3a22d",
+          "name": "contract-bot",
+          "allowedModels": [
+            "gpt-4o-mini",
+            "claude-contract"
+          ],
+          "allowedTools": [
+            "gh/*"
+          ],
+          "approvalTools": [
+            "gh/search"
+          ],
+          "dailyBudgetUsd": 5,
+          "spentTodayUsd": 0.002545,
+          "reservedTodayUsd": 0,
+          "active": true
+        },
+        {
+          "id": "e8052041-2801-4c1b-ba00-16d09bce7a19",
+          "name": "contract-limited",
+          "allowedModels": [
+            "gpt-4o-mini"
+          ],
+          "allowedTools": [
+            "gh/search"
+          ],
+          "approvalTools": [],
+          "dailyBudgetUsd": 0,
+          "spentTodayUsd": 0,
+          "reservedTodayUsd": 0,
+          "active": true
+        },
+        {
+          "id": "4259c041-f909-499f-9e55-14e89c926090",
+          "name": "contract-tiny",
+          "allowedModels": [
+            "gpt-4o-mini"
+          ],
+          "allowedTools": [],
+          "approvalTools": [],
+          "dailyBudgetUsd": 0.000001,
+          "spentTodayUsd": 0,
+          "reservedTodayUsd": 0,
+          "active": true
+        }
+      ]
+    }
+  },
+  "updateAgent": {
+    "method": "PATCH",
+    "route": "/admin/agents/:id",
+    "request": {
+      "dailyBudgetUsd": 10,
+      "active": true
+    },
+    "status": 200,
+    "response": {
+      "agent": {
+        "id": "6ad0c0e2-04f9-406e-bba6-fbb29bb3a22d",
+        "name": "contract-bot",
+        "allowedModels": [
+          "gpt-4o-mini",
+          "claude-contract"
+        ],
+        "allowedTools": [
+          "gh/*"
+        ],
+        "approvalTools": [
+          "gh/search"
+        ],
+        "dailyBudgetUsd": 10,
+        "spentTodayUsd": 0.002545,
+        "reservedTodayUsd": 0,
+        "active": true
+      }
+    }
+  },
+  "rotateKey": {
+    "method": "POST",
+    "route": "/admin/agents/:id/rotate-key",
+    "request": null,
+    "status": 200,
+    "response": {
+      "agent": {
+        "id": "6ad0c0e2-04f9-406e-bba6-fbb29bb3a22d",
+        "name": "contract-bot",
+        "allowedModels": [
+          "gpt-4o-mini",
+          "claude-contract"
+        ],
+        "allowedTools": [
+          "gh/*"
+        ],
+        "approvalTools": [
+          "gh/search"
+        ],
+        "dailyBudgetUsd": 10,
+        "spentTodayUsd": 0.002545,
+        "reservedTodayUsd": 0,
+        "active": true
+      },
+      "key": "ga_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+    }
+  },
+  "spendCheck": {
+    "method": "GET",
+    "route": "/admin/spend-check",
+    "request": null,
+    "status": 200,
+    "response": {
+      "day": "2026-11-12",
+      "divergences": []
+    }
+  },
+  "listApprovals": {
+    "method": "GET",
+    "route": "/admin/approvals",
+    "request": null,
+    "status": 200,
+    "response": {
+      "approvals": [
+        {
+          "id": "b7a6a112-d14b-4025-bf4e-59733e8a7963",
+          "createdAt": "2026-11-12T00:03:12.326Z",
+          "agentId": "6ad0c0e2-04f9-406e-bba6-fbb29bb3a22d",
+          "server": "gh",
+          "tool": "search",
+          "argsHash": "e0cecf09f5231fa47194c5e16ee23d478c4f26bc92d19ed81b7c6340564b7cb2",
+          "argsSummary": "q=\"contract\"",
+          "status": "approved",
+          "decidedAt": "2026-11-12T00:03:12.337Z",
+          "reason": null,
+          "accessClass": "read"
+        }
+      ]
+    }
+  },
+  "facets": {
+    "method": "GET",
+    "route": "/admin/ledger/facets",
+    "request": null,
+    "status": 200,
+    "response": {
+      "agents": [
+        {
+          "id": "6ad0c0e2-04f9-406e-bba6-fbb29bb3a22d",
+          "name": "contract-bot"
+        },
+        {
+          "id": "e8052041-2801-4c1b-ba00-16d09bce7a19",
+          "name": "contract-limited"
+        },
+        {
+          "id": "4259c041-f909-499f-9e55-14e89c926090",
+          "name": "contract-tiny"
+        }
+      ],
+      "models": [
+        "claude-contract",
+        "gh/delete#write",
+        "gh/search#read",
+        "gpt-4o",
+        "gpt-4o-mini"
+      ]
+    }
+  },
+  "verify": {
+    "method": "GET",
+    "route": "/admin/ledger/verify",
+    "request": null,
+    "status": 200,
+    "response": {
+      "valid": true,
+      "checked": 16,
+      "lastHash": "c8f86ab9c7d30224130ea820b50875e9dd2438c1b157701a60b4fb5259acd973"
+    }
+  },
+  "ledger": {
+    "method": "GET",
+    "route": "/admin/ledger",
+    "request": null,
+    "status": 200,
+    "response": {
+      "entries": [
+        {
+          "ts": "2026-11-12T00:03:12.283Z",
+          "agentId": "6ad0c0e2-04f9-406e-bba6-fbb29bb3a22d",
+          "action": "admin.agent.create",
+          "model": null,
+          "verdict": "allowed",
+          "reason": null,
+          "upstreamStatus": null,
+          "promptTokens": 0,
+          "completionTokens": 0,
+          "cost": 0,
+          "requestHash": "8c9bdc907573d1f4341e56d9560ccce51002a5d9c9c7ef018bffad1c60dc991d",
+          "responseHash": null,
+          "seq": 1,
+          "prevHash": "0000000000000000000000000000000000000000000000000000000000000000",
+          "hash": "991951e47b8a1e92eaf20a2c4a3b65765983cd3dd8aa4db1444de6421a4bbc66"
+        },
+        {
+          "ts": "2026-11-12T00:03:12.291Z",
+          "agentId": "e8052041-2801-4c1b-ba00-16d09bce7a19",
+          "action": "admin.agent.create",
+          "model": null,
+          "verdict": "allowed",
+          "reason": null,
+          "upstreamStatus": null,
+          "promptTokens": 0,
+          "completionTokens": 0,
+          "cost": 0,
+          "requestHash": "10a296dd25700e80b5fcba4dc6960554b8a2049f71e75b76fb0a79ca3f86bb9d",
+          "responseHash": null,
+          "seq": 2,
+          "prevHash": "991951e47b8a1e92eaf20a2c4a3b65765983cd3dd8aa4db1444de6421a4bbc66",
+          "hash": "987071a80fbde34c96b10d07df48394e12140f75f2b9c9930d66e9776f519e0c"
+        },
+        {
+          "ts": "2026-11-12T00:03:12.293Z",
+          "agentId": "4259c041-f909-499f-9e55-14e89c926090",
+          "action": "admin.agent.create",
+          "model": null,
+          "verdict": "allowed",
+          "reason": null,
+          "upstreamStatus": null,
+          "promptTokens": 0,
+          "completionTokens": 0,
+          "cost": 0,
+          "requestHash": "e9b0e1624d285c8467ba07a9528013e2b8e013fa260e2f8f67a487a1d76fac0b",
+          "responseHash": null,
+          "seq": 3,
+          "prevHash": "987071a80fbde34c96b10d07df48394e12140f75f2b9c9930d66e9776f519e0c",
+          "hash": "786c462f26943b89ca7f5915eefa15631092a5e3d18e55b8714d1719b3028379"
+        },
+        {
+          "ts": "2026-11-12T00:03:12.308Z",
+          "agentId": "6ad0c0e2-04f9-406e-bba6-fbb29bb3a22d",
+          "action": "chat.completions",
+          "model": "gpt-4o-mini",
+          "requestHash": "ffb904460a38929a4aef4d3b9d09d0f2375d248aa03d3104e83c130a4302d716",
+          "verdict": "allowed",
+          "reason": null,
+          "upstreamStatus": 200,
+          "promptTokens": 100,
+          "completionTokens": 50,
+          "cost": 45,
+          "responseHash": "d6bb2d04ba22444c65e850c014ea797626c542cc62783ce61c250f2c41ae8256",
+          "seq": 4,
+          "prevHash": "786c462f26943b89ca7f5915eefa15631092a5e3d18e55b8714d1719b3028379",
+          "hash": "d1a83efa0b54923589d0a072c7e52de3f9b76ce0b7c8c5ee7d78043c9355827d"
+        },
+        {
+          "ts": "2026-11-12T00:03:12.311Z",
+          "agentId": null,
+          "action": "chat.completions",
+          "model": null,
+          "verdict": "denied",
+          "reason": "invalid_key",
+          "upstreamStatus": null,
+          "promptTokens": 0,
+          "completionTokens": 0,
+          "cost": 0,
+          "requestHash": null,
+          "responseHash": null,
+          "seq": 5,
+          "prevHash": "d1a83efa0b54923589d0a072c7e52de3f9b76ce0b7c8c5ee7d78043c9355827d",
+          "hash": "f6aa16e27e1a0f94366319b055d2f9e09071ecf25471ca06cc50686904ba68a4"
+        },
+        {
+          "ts": "2026-11-12T00:03:12.315Z",
+          "agentId": "e8052041-2801-4c1b-ba00-16d09bce7a19",
+          "action": "chat.completions",
+          "model": "gpt-4o",
+          "requestHash": "a5a1e36ec30bd2eaa3f485866c90c815b2a20688389b3b8c48214ad677e5e055",
+          "verdict": "denied",
+          "reason": "model_not_allowed",
+          "upstreamStatus": null,
+          "promptTokens": 0,
+          "completionTokens": 0,
+          "cost": 0,
+          "responseHash": null,
+          "seq": 6,
+          "prevHash": "f6aa16e27e1a0f94366319b055d2f9e09071ecf25471ca06cc50686904ba68a4",
+          "hash": "f1e69ed8b560569d6370eab2c9a91ebfea5702a3b5b6a91172ab152b1e288e2b"
+        },
+        {
+          "ts": "2026-11-12T00:03:12.318Z",
+          "agentId": "4259c041-f909-499f-9e55-14e89c926090",
+          "action": "chat.completions",
+          "model": "gpt-4o-mini",
+          "requestHash": "ffb904460a38929a4aef4d3b9d09d0f2375d248aa03d3104e83c130a4302d716",
+          "verdict": "denied",
+          "reason": "budget_exceeded",
+          "upstreamStatus": null,
+          "promptTokens": 0,
+          "completionTokens": 0,
+          "cost": 0,
+          "responseHash": null,
+          "seq": 7,
+          "prevHash": "f1e69ed8b560569d6370eab2c9a91ebfea5702a3b5b6a91172ab152b1e288e2b",
+          "hash": "1a254922a45f5c767d2f4e0d948e552d5e524eebc22bbd2e0397c298db8096a8"
+        },
+        {
+          "ts": "2026-11-12T00:03:12.321Z",
+          "agentId": "6ad0c0e2-04f9-406e-bba6-fbb29bb3a22d",
+          "action": "messages",
+          "model": "claude-contract",
+          "requestHash": "ef4b3f5a3fc8defc5c9db48433b706d6272526d15f46e07d4bc3b2ffe4d6cbe9",
+          "verdict": "allowed",
+          "reason": null,
+          "upstreamStatus": 200,
+          "promptTokens": 100,
+          "completionTokens": 50,
+          "cost": 2500,
+          "responseHash": "f00c4de5c1bee7f0b10e91d7af6b469d77be8849e55fa7ee7a5c64cabd87f11e",
+          "seq": 8,
+          "prevHash": "1a254922a45f5c767d2f4e0d948e552d5e524eebc22bbd2e0397c298db8096a8",
+          "hash": "344f205dcf62d5095cbb64648901b894cc483043a0024715ddb6357ad6380031"
+        },
+        {
+          "ts": "2026-11-12T00:03:12.324Z",
+          "agentId": "e8052041-2801-4c1b-ba00-16d09bce7a19",
+          "action": "messages",
+          "model": "claude-contract",
+          "requestHash": "ef4b3f5a3fc8defc5c9db48433b706d6272526d15f46e07d4bc3b2ffe4d6cbe9",
+          "verdict": "denied",
+          "reason": "model_not_allowed",
+          "upstreamStatus": null,
+          "promptTokens": 0,
+          "completionTokens": 0,
+          "cost": 0,
+          "responseHash": null,
+          "seq": 9,
+          "prevHash": "344f205dcf62d5095cbb64648901b894cc483043a0024715ddb6357ad6380031",
+          "hash": "b4db2000de0b3d9aa4b369de6ea33a0dc76c685c044b0ee9201c99b7c2722125"
+        },
+        {
+          "ts": "2026-11-12T00:03:12.327Z",
+          "agentId": "6ad0c0e2-04f9-406e-bba6-fbb29bb3a22d",
+          "action": "mcp.approval.requested",
+          "model": "gh/search#read",
+          "requestHash": "e0cecf09f5231fa47194c5e16ee23d478c4f26bc92d19ed81b7c6340564b7cb2",
+          "upstreamStatus": null,
+          "promptTokens": 0,
+          "completionTokens": 0,
+          "cost": 0,
+          "responseHash": null,
+          "verdict": "allowed",
+          "reason": null,
+          "seq": 10,
+          "prevHash": "b4db2000de0b3d9aa4b369de6ea33a0dc76c685c044b0ee9201c99b7c2722125",
+          "hash": "3ecb48b12e46be962098eef17d00f6e16b3d803f534dd30b3584cbd5a6f75d19"
+        },
+        {
+          "ts": "2026-11-12T00:03:12.337Z",
+          "agentId": "6ad0c0e2-04f9-406e-bba6-fbb29bb3a22d",
+          "action": "mcp.approval.decided",
+          "model": "gh/search#read",
+          "verdict": "allowed",
+          "reason": "approved",
+          "upstreamStatus": null,
+          "promptTokens": 0,
+          "completionTokens": 0,
+          "cost": 0,
+          "requestHash": "e0cecf09f5231fa47194c5e16ee23d478c4f26bc92d19ed81b7c6340564b7cb2",
+          "responseHash": null,
+          "seq": 11,
+          "prevHash": "3ecb48b12e46be962098eef17d00f6e16b3d803f534dd30b3584cbd5a6f75d19",
+          "hash": "893fb1e65c7820feae1cdb47ecaecd0c6b53d7c961f83e527f23320e3df63da9"
+        },
+        {
+          "ts": "2026-11-12T00:03:12.338Z",
+          "agentId": "6ad0c0e2-04f9-406e-bba6-fbb29bb3a22d",
+          "action": "mcp.tools/call",
+          "model": "gh/search#read",
+          "requestHash": "e0cecf09f5231fa47194c5e16ee23d478c4f26bc92d19ed81b7c6340564b7cb2",
+          "verdict": "allowed",
+          "reason": null,
+          "upstreamStatus": 200,
+          "promptTokens": 0,
+          "completionTokens": 0,
+          "cost": 0,
+          "responseHash": "323ffe8859ed5bfa3af02fa71836fd02be2c493be49df3837ff2dd9e3228926f",
+          "seq": 12,
+          "prevHash": "893fb1e65c7820feae1cdb47ecaecd0c6b53d7c961f83e527f23320e3df63da9",
+          "hash": "11928eecb482930028056104676cbb39ee0a1dd2f6f545c883128cefcf5922a4"
+        },
+        {
+          "ts": "2026-11-12T00:03:12.340Z",
+          "agentId": "e8052041-2801-4c1b-ba00-16d09bce7a19",
+          "action": "mcp.tools/call",
+          "model": "gh/delete#write",
+          "requestHash": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+          "verdict": "denied",
+          "reason": "tool_not_allowed",
+          "upstreamStatus": null,
+          "promptTokens": 0,
+          "completionTokens": 0,
+          "cost": 0,
+          "responseHash": null,
+          "seq": 13,
+          "prevHash": "11928eecb482930028056104676cbb39ee0a1dd2f6f545c883128cefcf5922a4",
+          "hash": "427047d95ee3e6164a691d6bf225d037855e5227dc647ad026bf56fc49f04e50"
+        },
+        {
+          "ts": "2026-11-12T00:03:12.350Z",
+          "agentId": "6ad0c0e2-04f9-406e-bba6-fbb29bb3a22d",
+          "action": "admin.agent.update",
+          "model": null,
+          "verdict": "allowed",
+          "reason": "dailyBudget",
+          "upstreamStatus": null,
+          "promptTokens": 0,
+          "completionTokens": 0,
+          "cost": 0,
+          "requestHash": "88ef135bb9c1b1a8ae7e846660cc208329e2da82d6dd0d9df5a33c121e492788",
+          "responseHash": null,
+          "seq": 14,
+          "prevHash": "427047d95ee3e6164a691d6bf225d037855e5227dc647ad026bf56fc49f04e50",
+          "hash": "131c987241cce08a2467dbd288d77a6e8e747595540b31e0c2973c077ce2d44a"
+        },
+        {
+          "ts": "2026-11-12T00:03:12.351Z",
+          "agentId": "6ad0c0e2-04f9-406e-bba6-fbb29bb3a22d",
+          "action": "admin.agent.rotate-key",
+          "model": null,
+          "verdict": "allowed",
+          "reason": null,
+          "upstreamStatus": null,
+          "promptTokens": 0,
+          "completionTokens": 0,
+          "cost": 0,
+          "requestHash": "adbecc885896e3d880bee2e7b1ed82d79f4b1bc432f87fb290a0e376c561b633",
+          "responseHash": null,
+          "seq": 15,
+          "prevHash": "131c987241cce08a2467dbd288d77a6e8e747595540b31e0c2973c077ce2d44a",
+          "hash": "ca08407209731ff6f3280c2f51557aae041435c4c4cbd85277920bcc950b4b0f"
+        },
+        {
+          "ts": "2026-11-12T00:03:12.367Z",
+          "agentId": "6ad0c0e2-04f9-406e-bba6-fbb29bb3a22d",
+          "action": "chat.completions",
+          "model": "gpt-4o-mini",
+          "verdict": "allowed",
+          "reason": null,
+          "upstreamStatus": 200,
+          "promptTokens": 10,
+          "completionTokens": 20,
+          "cost": 100,
+          "requestHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "responseHash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "degraded": true,
+          "seq": 16,
+          "prevHash": "ca08407209731ff6f3280c2f51557aae041435c4c4cbd85277920bcc950b4b0f",
+          "hash": "c8f86ab9c7d30224130ea820b50875e9dd2438c1b157701a60b4fb5259acd973"
+        }
+      ]
+    }
+  }
+}

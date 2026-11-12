@@ -6,6 +6,31 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Breaking changes
+
+- MCP non-tool pass-through is replaced by explicit governance. In enforce mode unsupported methods and server requests are refused without forwarding; initialization, listings and declared notifications are governed and journaled, ping is handled locally, and listings/capabilities are filtered. GET/DELETE and batches are refused. Observe mode records policy violations while relaying them; malformed framing remains refused. See [the matrix](docs/mcp-matrix.md).
+- PostgreSQL startup now requires a complete 0.3.0 baseline or a recognized versioned schema. Incomplete unversioned schemas and newer schema versions are refused. Numbered migrations commit transactionally under an advisory lock; rollback requires a matched backup and executable, not down migrations. See [the upgrade guide](docs/upgrade-0.3-to-1.0.md).
+- New ledger entries use format 2 with hashed optional policy, operator and approval references. Historical format 1 entries and hashes remain unchanged; verifiers must understand version ordering and reject unknown versions. See [the ledger contract](docs/ledger-format.md).
+
+### Added
+
+- Named, revocable operator tokens, immutable policy revisions captured at admission, operator-attributed administration and approval decisions, correlated approval rows, and bilingual console mandate metadata. Tokens establish credential possession, not human identity; bootstrap remains available. Migration preserves historical ledger hashes and spend.
+- Optional per-agent rolling-minute and concurrency limits shared by both model endpoints and MCP, with journaled zero-cost refusals before budget reservation and Retry-After (HTTP 429 for model calls and MCP notifications; MCP requests currently use HTTP 200 with JSON-RPC `-32004`, a readiness gap). Counters are process-local and reset on restart; default limits remain unlimited.
+- Sequence-paginated NDJSON export with a captured head, externally retained checkpoints and checkpoint-aware verification. Tail truncation or consistent replacement is detectable only relative to a checkpoint kept outside the database.
+- Dependency-free standalone offline verifier with independent hashing, complete export validation, external checkpoint comparisons and text/JSON output.
+- Written API, ledger, schema and mandate contracts, historical golden fixtures and regression tests preserving version 1 verification.
+- Human-only, opt-in real-Anthropic harness and synthetic usage/cost tests for plain and streaming responses; cache counts use the configured input rate. The endpoint passed one recorded real-provider run (one model, plain and streaming, usage and cost check) and remains format-compatible beyond that scope.
+- Chromium tests against the built console and a real gateway with MemoryStore cover login, agent creation, approval decisions, ledger filters, integrity results and language switching. `pnpm test:e2e` is configured in CI; final execution evidence remains required.
+- Local Compose profile with Ollama, authenticated first-run instructions, three runnable SDK/MCP examples and documentation drift checks. Under ten minutes remains an unmeasured target.
+- Release workflow configuration for keyless image-index signing, SPDX SBOM and SLSA provenance, with [verification instructions](docs/verify-release.md). Publication and the first signed release remain human-only and unverified.
+- [0.3.0 upgrade/restore guide](docs/upgrade-0.3-to-1.0.md) and [v1 readiness evidence and gaps](docs/v1-readiness.md); READMEs and operational documentation reconciled with implemented governance, operators, limits, migrations and checkpoint guarantees. No version bump or release tag.
+
+### Fixed
+
+- Login validation errors follow the French/English language switch immediately.
+- Restart validation classifies failures and checks ledger coverage, orphan reservations and spend consistency. Historical 0.3.0 unclassified errors cannot be reconstructed; requests now time out after 120 seconds rather than hanging indefinitely.
+- Gateway tests synchronize on observable state instead of short fixed delays; MCP migration fixtures use isolated schemas. Browser fixtures close idle connections during teardown.
+
 ## [0.3.0] - 2026-11-11
 
 ### Upgrade notes (behavior changes)
@@ -87,7 +112,7 @@ Sections for 0.2.0 (2026-10-22), 0.2.1 (2026-10-22) and 0.2.2 were never written
 ### Added
 
 - OpenAI-compatible proxy endpoint (`POST /v1/chat/completions`) with streaming support.
-- Anthropic-compatible proxy endpoint (`POST /v1/messages`) with streaming support.
+- Anthropic-format proxy endpoint (format-compatible, not yet verified against the provider) (`POST /v1/messages`) with streaming support.
 - Per-agent `ga_…` keys; the real provider key stays inside the gateway.
 - Per-agent model allow-lists.
 - Atomic daily budget reservation and settlement.

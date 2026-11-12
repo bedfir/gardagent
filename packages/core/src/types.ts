@@ -1,6 +1,13 @@
 /** Amounts in micro-dollars (1 USD = 1,000,000) so we stay in integers. */
 export type MicroUsd = number;
 
+export interface Operator {
+  id: string;
+  label: string;
+  createdAt: string;
+  revokedAt: string | null;
+}
+
 export interface Agent {
   id: string;
   name: string;
@@ -14,6 +21,10 @@ export interface Agent {
   approvalTools: string[];
   /** Daily spending cap (UTC). 0 = unlimited. */
   dailyBudget: MicroUsd;
+  /** Rolling 60-second admission cap; absent or zero means unlimited. */
+  requestsPerMinute?: number;
+  /** Active request cap; absent or zero means unlimited. */
+  maxConcurrentRequests?: number;
   active: boolean;
 }
 
@@ -23,6 +34,11 @@ export type ToolAccessClass = "read" | "write";
 
 /** What the gateway asks to write into the ledger. */
 export interface LedgerInput {
+  /** Absent on historical entries; new store writes use version 2. */
+  formatVersion?: number;
+  policyRev?: string;
+  operatorId?: string;
+  approvalRef?: string;
   ts: string;
   agentId: string | null;
   action: string;
@@ -59,6 +75,7 @@ export interface LedgerSettlement {
 
 /** What a reservation remembers about its call, so that an orphaned one can still leave a ledger row. */
 export interface ReservationMeta {
+  policyRev?: string;
   action: string;
   model: string | null;
   requestHash: string | null;
@@ -94,6 +111,10 @@ export interface AgentPatch {
   allowedTools?: string[];
   approvalTools?: string[];
   dailyBudget?: MicroUsd;
+  /** Rolling 60-second admission cap; absent or zero means unlimited. */
+  requestsPerMinute?: number;
+  /** Active request cap; absent or zero means unlimited. */
+  maxConcurrentRequests?: number;
   active?: boolean;
 }
 
@@ -165,6 +186,8 @@ export type ApprovalStatus = "pending" | "approved" | "rejected" | "expired";
  * readable trace of the arguments: it lives in this table and never goes into the ledger.
  */
 export interface Approval {
+  policyRev?: string;
+  operatorId?: string;
   id: string;
   createdAt: string;
   agentId: string;
@@ -180,13 +203,18 @@ export interface Approval {
 }
 
 export interface Store {
+  createOperator(operator: Operator, tokenHash: string, audit: LedgerInput): Promise<void>;
+  listOperators(): Promise<Operator[]>;
+  findOperator(tokenHash: string): Promise<Operator | null>;
+  revokeOperator(id: string, at: string, audit: LedgerInput): Promise<boolean>;
+  getPolicyRevision(id: string): Promise<string | null>;
   /** Cheap availability probe (SELECT 1); rejects when the database is unreachable. Optional: absent for in-memory. */
   ping?(): Promise<void>;
   findAgentByKeyHash(keyHash: string): Promise<Agent | null>;
-  createAgent(agent: Agent): Promise<void>;
+  createAgent(agent: Agent, audit?: LedgerInput): Promise<void>;
   getAgent(id: string): Promise<Agent | null>;
   /** Applies the supplied fields; returns the updated agent, or null if it does not exist. */
-  updateAgent(id: string, patch: AgentPatch): Promise<Agent | null>;
+  updateAgent(id: string, patch: AgentPatch, audit?: LedgerInput): Promise<Agent | null>;
   /**
    * Replaces the stored key hash of an agent (same id, policy and history); returns the updated agent, or null if it
    * does not exist. Throws KeyHashCollisionError when another agent already has this hash.
@@ -228,6 +256,8 @@ export interface Store {
   aggregateLedger(sinceDay: string): Promise<LedgerAggregate[]>;
   /** Ledger rows, ascending by seq by default; afterSeq and beforeSeq are exclusive bounds. */
   listLedger(options?: LedgerQuery): Promise<LedgerEntry[]>;
+  /** Current committed head, or the genesis anchor for an empty ledger. */
+  ledgerHead(): Promise<{ sequence: number; head_hash: string }>;
   /**
    * Agents whose `agent_spend` for `day` (YYYY-MM-DD, UTC) differs from the sum of their ledger cost on that day.
    * Only divergent agents are returned, sorted by agent id. Read-only: nothing is repaired.
@@ -235,10 +265,10 @@ export interface Store {
   reconcileSpend(day: string): Promise<SpendDivergence[]>;
   /** Distinct agent ids and models present in the ledger, sorted. */
   ledgerFacets(): Promise<LedgerFacets>;
-  createApproval(approval: Approval): Promise<void>;
+  createApproval(approval: Approval, audit?: LedgerInput): Promise<void>;
   getApproval(id: string): Promise<Approval | null>;
   /** Decides a request still pending; returns null if it does not exist or is no longer pending. */
-  decideApproval(id: string, status: Exclude<ApprovalStatus, "pending">, reason: string | null, decidedAt: string): Promise<Approval | null>;
+  decideApproval(id: string, status: Exclude<ApprovalStatus, "pending">, reason: string | null, decidedAt: string, operatorId?: string, audit?: LedgerInput): Promise<Approval | null>;
   /** Most recent requests first, filtered by status when provided. */
   listApprovals(options?: { status?: ApprovalStatus; limit?: number }): Promise<Approval[]>;
 }

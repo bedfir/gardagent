@@ -1,121 +1,12 @@
+import { policyRevision, safeEqual, type Operator } from "@gardagent/core";
 import { randomUUID } from "node:crypto";
 import pg from "pg";
+import { migrateDatabase } from "./migrations.js";
 import { chainEntry, GENESIS_HASH, KeyHashCollisionError, INTERRUPTED_FALLBACK_ACTION, INTERRUPTED_REASON, type Agent, type AgentPatch, type AppendLedgerOptions, type Approval, type ApprovalStatus, type LedgerAggregate, type LedgerEntry, type LedgerFacets, type LedgerInput, type LedgerQuery, type MicroUsd, type ReservationMeta, type SpendDivergence, type Store, type ToolAccessClass } from "@gardagent/core";
 
 /** Advisory lock that serialises ledger writes across instances. */
 const LEDGER_LOCK = 72_617_001;
 
-export const SCHEMA = `
-CREATE TABLE IF NOT EXISTS agents (
-  id              TEXT PRIMARY KEY,
-  name            TEXT NOT NULL,
-  key_hash        TEXT NOT NULL UNIQUE,
-  allowed_models  TEXT[] NOT NULL,
-  daily_budget    BIGINT NOT NULL DEFAULT 0,
-  active          BOOLEAN NOT NULL DEFAULT TRUE,
-  created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-
--- Idempotent migration: databases created before MCP tools do not have this column.
-ALTER TABLE agents ADD COLUMN IF NOT EXISTS allowed_tools TEXT[] NOT NULL DEFAULT '{}';
-
-ALTER TABLE agents ADD COLUMN IF NOT EXISTS approval_tools TEXT[] NOT NULL DEFAULT '{}';
-
--- Human validation requests. args_summary is the only readable trace of arguments (never in the ledger).
-CREATE TABLE IF NOT EXISTS approvals (
-  id            TEXT PRIMARY KEY,
-  created_at    TEXT NOT NULL,
-  agent_id      TEXT NOT NULL,
-  server        TEXT NOT NULL,
-  tool          TEXT NOT NULL,
-  args_hash     TEXT NOT NULL,
-  args_summary  TEXT NOT NULL,
-  status        TEXT NOT NULL DEFAULT 'pending',
-  decided_at    TEXT,
-  reason        TEXT,
-  access_class  TEXT NOT NULL DEFAULT 'write'
-);
-
--- Idempotent migration: add access_class to existing approvals tables.
-ALTER TABLE approvals ADD COLUMN IF NOT EXISTS access_class TEXT NOT NULL DEFAULT 'write';
-
-CREATE INDEX IF NOT EXISTS approvals_status_idx ON approvals (status, created_at);
-
-CREATE TABLE IF NOT EXISTS agent_spend (
-  agent_id  TEXT NOT NULL REFERENCES agents(id),
-  day       TEXT NOT NULL,
-  amount    BIGINT NOT NULL DEFAULT 0,
-  PRIMARY KEY (agent_id, day)
-);
-
--- In-flight budget reservations, one row each so that a stuck one can expire on its own.
-CREATE TABLE IF NOT EXISTS agent_reservations (
-  id         TEXT PRIMARY KEY,
-  agent_id   TEXT NOT NULL REFERENCES agents(id),
-  day        TEXT NOT NULL,
-  amount     BIGINT NOT NULL,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
--- What the call was, so that an orphaned reservation can still leave a ledger row (interrupted_no_response).
--- Idempotent migration; nullable: reservations created before it hold no metadata.
-ALTER TABLE agent_reservations ADD COLUMN IF NOT EXISTS action TEXT;
-ALTER TABLE agent_reservations ADD COLUMN IF NOT EXISTS model TEXT;
-ALTER TABLE agent_reservations ADD COLUMN IF NOT EXISTS request_hash TEXT;
-CREATE INDEX IF NOT EXISTS agent_reservations_agent_idx ON agent_reservations (agent_id, day);
-
-CREATE TABLE IF NOT EXISTS ledger (
-  seq                BIGINT PRIMARY KEY,
-  ts                 TEXT NOT NULL,
-  agent_id           TEXT,
-  action             TEXT NOT NULL,
-  model              TEXT,
-  verdict            TEXT NOT NULL,
-  reason             TEXT,
-  upstream_status    INTEGER,
-  prompt_tokens      INTEGER NOT NULL,
-  completion_tokens  INTEGER NOT NULL,
-  cost               BIGINT NOT NULL,
-  request_hash       TEXT,
-  response_hash      TEXT,
-  prev_hash          TEXT NOT NULL,
-  hash               TEXT NOT NULL UNIQUE
-);
-
--- Rows that went through the local spool (database outage). Idempotent migration for older databases.
-ALTER TABLE ledger ADD COLUMN IF NOT EXISTS degraded BOOLEAN NOT NULL DEFAULT FALSE;
-
--- One row per idempotency key: written in the same transaction as the ledger row it guards, so a spool line
--- replayed twice (crash, client timeout, timeout during COMMIT) yields one ledger row. Not part of the chain.
-CREATE TABLE IF NOT EXISTS ledger_idempotency (
-  key        TEXT PRIMARY KEY,
-  seq        BIGINT NOT NULL,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-
--- Keys of spend increments applied for a call, so that a settlement is never counted twice.
-CREATE TABLE IF NOT EXISTS spend_settlements (
-  key        TEXT PRIMARY KEY,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-
-CREATE INDEX IF NOT EXISTS ledger_ts_idx ON ledger (ts);
-CREATE INDEX IF NOT EXISTS ledger_agent_ts_idx ON ledger (agent_id, ts);
--- Ledger filters: the list is paged by seq, so an equality filter plus seq lets PostgreSQL read the matching rows
--- already in seq order and stop at LIMIT (instead of scanning the primary key and discarding the rest).
-CREATE INDEX IF NOT EXISTS ledger_agent_seq_idx ON ledger (agent_id, seq);
-CREATE INDEX IF NOT EXISTS ledger_model_seq_idx ON ledger (model, seq);
-
--- The ledger is append-only: any modification or deletion is rejected by the database.
-CREATE OR REPLACE FUNCTION ledger_append_only() RETURNS trigger AS $$
-BEGIN
-  RAISE EXCEPTION 'Gardagent ledger is append-only';
-END;
-$$ LANGUAGE plpgsql;
-
-DROP TRIGGER IF EXISTS ledger_no_update ON ledger;
-CREATE TRIGGER ledger_no_update BEFORE UPDATE OR DELETE ON ledger
-  FOR EACH ROW EXECUTE FUNCTION ledger_append_only();
-`;
 
 interface AgentRow {
   id: string;
@@ -125,10 +16,16 @@ interface AgentRow {
   allowed_tools: string[] | null;
   approval_tools: string[] | null;
   daily_budget: string;
+  requests_per_minute: number | null;
+  max_concurrent_requests: number | null;
   active: boolean;
 }
 
 interface LedgerRow {
+  format_version: number | null;
+  policy_rev: string | null;
+  operator_id: string | null;
+  approval_ref: string | null;
   seq: string;
   ts: string;
   agent_id: string | null;
@@ -156,11 +53,15 @@ function toAgent(row: AgentRow): Agent {
     allowedTools: row.allowed_tools ?? [],
     approvalTools: row.approval_tools ?? [],
     dailyBudget: Number(row.daily_budget),
+    ...(row.requests_per_minute ? { requestsPerMinute: row.requests_per_minute } : {}),
+    ...(row.max_concurrent_requests ? { maxConcurrentRequests: row.max_concurrent_requests } : {}),
     active: row.active,
   };
 }
 
 interface ApprovalRow {
+  policy_rev: string | null;
+  operator_id: string | null;
   id: string;
   created_at: string;
   agent_id: string;
@@ -176,6 +77,8 @@ interface ApprovalRow {
 
 function toApproval(r: ApprovalRow): Approval {
   return {
+    ...(r.policy_rev != null ? { policyRev: r.policy_rev } : {}),
+    ...(r.operator_id != null ? { operatorId: r.operator_id } : {}),
     id: r.id,
     createdAt: r.created_at,
     agentId: r.agent_id,
@@ -210,6 +113,10 @@ async function addSpendOnce(db: Pick<pg.Pool, "query">, agentId: string, day: st
 
 function toEntry(row: LedgerRow): LedgerEntry {
   return {
+    ...(row.format_version != null ? { formatVersion: row.format_version } : {}),
+    ...(row.policy_rev != null ? { policyRev: row.policy_rev } : {}),
+    ...(row.operator_id != null ? { operatorId: row.operator_id } : {}),
+    ...(row.approval_ref != null ? { approvalRef: row.approval_ref } : {}),
     seq: Number(row.seq),
     ts: row.ts,
     agentId: row.agent_id,
@@ -238,11 +145,11 @@ function defaultPoolLog(message: string, error: unknown): void {
 async function insertChained(client: Pick<pg.Pool, "query">, input: LedgerInput): Promise<LedgerEntry> {
   const { rows } = await client.query<{ seq: string; hash: string }>("SELECT seq, hash FROM ledger ORDER BY seq DESC LIMIT 1");
   const last = rows[0];
-  const entry = chainEntry(last ? Number(last.seq) + 1 : 1, last?.hash ?? GENESIS_HASH, input);
+  const entry = chainEntry(last ? Number(last.seq) + 1 : 1, last?.hash ?? GENESIS_HASH, { ...input, formatVersion: 2 });
   await client.query(
     `INSERT INTO ledger (seq, ts, agent_id, action, model, verdict, reason, upstream_status,
-       prompt_tokens, completion_tokens, cost, request_hash, response_hash, prev_hash, hash, degraded)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`,
+       prompt_tokens, completion_tokens, cost, request_hash, response_hash, prev_hash, hash, degraded, format_version, policy_rev, operator_id, approval_ref)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)`,
     [
       entry.seq,
       entry.ts,
@@ -260,6 +167,10 @@ async function insertChained(client: Pick<pg.Pool, "query">, input: LedgerInput)
       entry.prevHash,
       entry.hash,
       entry.degraded === true,
+      entry.formatVersion,
+      entry.policyRev ?? null,
+      entry.operatorId ?? null,
+      entry.approvalRef ?? null,
     ],
   );
   return entry;
@@ -299,11 +210,59 @@ export class PgStore implements Store {
   }
 
   async migrate(): Promise<void> {
-    await this.pool.query(SCHEMA);
+    await migrateDatabase(this.pool);
   }
 
   async close(): Promise<void> {
     await this.pool.end();
+  }
+
+  private async transaction<T>(run: (client: pg.PoolClient) => Promise<T>): Promise<T> {
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      await client.query("SELECT pg_advisory_xact_lock($1)", [LEDGER_LOCK]);
+      const result = await run(client);
+      await client.query("COMMIT");
+      return result;
+    } catch (error) {
+      await client.query("ROLLBACK").catch(() => undefined);
+      throw error;
+    } finally { client.release(); }
+  }
+  private async rememberPolicy(client: pg.PoolClient, agent: Agent): Promise<string> {
+    const revision = policyRevision(agent);
+    await client.query("INSERT INTO policy_revisions (id, canonical) VALUES ($1,$2) ON CONFLICT DO NOTHING", [revision.id, revision.canonical]);
+    return revision.id;
+  }
+  async getPolicyRevision(id: string): Promise<string | null> {
+    const { rows } = await this.pool.query("SELECT canonical FROM policy_revisions WHERE id = $1", [id]);
+    return rows[0]?.canonical ?? null;
+  }
+  async createOperator(operator: Operator, tokenHash: string, audit: LedgerInput): Promise<void> {
+    await this.transaction(async (client) => {
+      await client.query("INSERT INTO operators (id,label,token_hash,created_at,revoked_at) VALUES ($1,$2,$3,$4,$5)",
+        [operator.id, operator.label, tokenHash, operator.createdAt, operator.revokedAt]);
+      await insertChained(client, audit);
+    });
+  }
+  async listOperators(): Promise<Operator[]> {
+    const { rows } = await this.pool.query('SELECT id, label, created_at AS "createdAt", revoked_at AS "revokedAt" FROM operators ORDER BY created_at, id');
+    return rows;
+  }
+  async findOperator(tokenHash: string): Promise<Operator | null> {
+    const { rows } = await this.pool.query('SELECT id, label, token_hash, created_at AS "createdAt", revoked_at AS "revokedAt" FROM operators WHERE token_hash = $1 AND revoked_at IS NULL', [tokenHash]);
+    const row = rows[0];
+    if (!row || !safeEqual(row.token_hash, tokenHash)) return null;
+    return { id: row.id, label: row.label, createdAt: row.createdAt, revokedAt: row.revokedAt };
+  }
+  async revokeOperator(id: string, at: string, audit: LedgerInput): Promise<boolean> {
+    return this.transaction(async (client) => {
+      const result = await client.query("UPDATE operators SET revoked_at = $2 WHERE id = $1 AND revoked_at IS NULL", [id, at]);
+      if (!result.rowCount) return false;
+      await insertChained(client, audit);
+      return true;
+    });
   }
 
   async findAgentByKeyHash(keyHash: string): Promise<Agent | null> {
@@ -311,11 +270,14 @@ export class PgStore implements Store {
     return rows[0] ? toAgent(rows[0]) : null;
   }
 
-  async createAgent(agent: Agent): Promise<void> {
-    await this.pool.query(
-      "INSERT INTO agents (id, name, key_hash, allowed_models, allowed_tools, approval_tools, daily_budget, active) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
-      [agent.id, agent.name, agent.keyHash, agent.allowedModels, agent.allowedTools, agent.approvalTools, agent.dailyBudget, agent.active],
-    );
+  async createAgent(agent: Agent, audit?: LedgerInput): Promise<void> {
+    await this.transaction(async (client) => {
+      const rev = await this.rememberPolicy(client, agent);
+      await client.query(
+        "INSERT INTO agents (id, name, key_hash, allowed_models, allowed_tools, approval_tools, daily_budget, active, policy_rev, requests_per_minute, max_concurrent_requests) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)",
+        [agent.id, agent.name, agent.keyHash, agent.allowedModels, agent.allowedTools, agent.approvalTools, agent.dailyBudget, agent.active, rev, agent.requestsPerMinute || null, agent.maxConcurrentRequests || null]);
+      if (audit) await insertChained(client, { ...audit, policyRev: rev });
+    });
   }
 
   async getAgent(id: string): Promise<Agent | null> {
@@ -323,27 +285,35 @@ export class PgStore implements Store {
     return rows[0] ? toAgent(rows[0]) : null;
   }
 
-  async updateAgent(id: string, patch: AgentPatch): Promise<Agent | null> {
-    // Column names are literals; all values are passed as parameters.
-    const sets: string[] = [];
-    const values: unknown[] = [];
-    const set = (column: string, value: unknown) => {
-      values.push(value);
-      sets.push(`${column} = $${values.length}`);
-    };
-    if (patch.name !== undefined) set("name", patch.name);
-    if (patch.allowedModels !== undefined) set("allowed_models", patch.allowedModels);
-    if (patch.allowedTools !== undefined) set("allowed_tools", patch.allowedTools);
-    if (patch.approvalTools !== undefined) set("approval_tools", patch.approvalTools);
-    if (patch.dailyBudget !== undefined) set("daily_budget", patch.dailyBudget);
-    if (patch.active !== undefined) set("active", patch.active);
-    if (sets.length === 0) return this.getAgent(id);
-    values.push(id);
-    const { rows } = await this.pool.query<AgentRow>(
-      `UPDATE agents SET ${sets.join(", ")} WHERE id = $${values.length} RETURNING *`,
-      values,
-    );
-    return rows[0] ? toAgent(rows[0]) : null;
+  async updateAgent(id: string, patch: AgentPatch, audit?: LedgerInput): Promise<Agent | null> {
+    return this.transaction(async (client) => {
+      const current = await client.query<AgentRow>("SELECT * FROM agents WHERE id = $1 FOR UPDATE", [id]);
+      if (!current.rows[0]) return null;
+      const rev = await this.rememberPolicy(client, { ...toAgent(current.rows[0]), ...patch });
+      // Column names are literals; all values are passed as parameters.
+      const sets: string[] = [];
+      const values: unknown[] = [];
+      const set = (column: string, value: unknown) => {
+        values.push(value);
+        sets.push(`${column} = $${values.length}`);
+      };
+      if (patch.name !== undefined) set("name", patch.name);
+      if (patch.allowedModels !== undefined) set("allowed_models", patch.allowedModels);
+      if (patch.allowedTools !== undefined) set("allowed_tools", patch.allowedTools);
+      if (patch.approvalTools !== undefined) set("approval_tools", patch.approvalTools);
+      if (patch.requestsPerMinute !== undefined) set("requests_per_minute", patch.requestsPerMinute || null);
+      if (patch.maxConcurrentRequests !== undefined) set("max_concurrent_requests", patch.maxConcurrentRequests || null);
+      if (patch.dailyBudget !== undefined) set("daily_budget", patch.dailyBudget);
+      if (patch.active !== undefined) set("active", patch.active);
+      set("policy_rev", rev);
+      values.push(id);
+      const { rows } = await client.query<AgentRow>(
+        `UPDATE agents SET ${sets.join(", ")} WHERE id = $${values.length} RETURNING *`,
+        values,
+      );
+      if (audit) await insertChained(client, { ...audit, policyRev: rev });
+      return rows[0] ? toAgent(rows[0]) : null;
+    });
   }
 
   async rotateAgentKey(id: string, keyHash: string, audit?: LedgerInput): Promise<Agent | null> {
@@ -410,12 +380,15 @@ export class PgStore implements Store {
     }));
   }
 
-  async createApproval(a: Approval): Promise<void> {
-    await this.pool.query(
-      `INSERT INTO approvals (id, created_at, agent_id, server, tool, args_hash, args_summary, status, decided_at, reason, access_class)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
-      [a.id, a.createdAt, a.agentId, a.server, a.tool, a.argsHash, a.argsSummary, a.status, a.decidedAt, a.reason, a.accessClass],
-    );
+  async createApproval(a: Approval, audit?: LedgerInput): Promise<void> {
+    await this.transaction(async (client) => {
+      await client.query(
+        `INSERT INTO approvals (id, created_at, agent_id, server, tool, args_hash, args_summary, status, decided_at, reason, access_class, policy_rev, operator_id)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
+        [a.id, a.createdAt, a.agentId, a.server, a.tool, a.argsHash, a.argsSummary, a.status, a.decidedAt, a.reason, a.accessClass, a.policyRev ?? null, a.operatorId ?? null],
+      );
+      if (audit) await insertChained(client, audit);
+    });
   }
 
   async getApproval(id: string): Promise<Approval | null> {
@@ -423,13 +396,16 @@ export class PgStore implements Store {
     return rows[0] ? toApproval(rows[0]) : null;
   }
 
-  async decideApproval(id: string, status: Exclude<ApprovalStatus, "pending">, reason: string | null, decidedAt: string): Promise<Approval | null> {
-    // Atomic: only one decision wins, subsequent ones touch no row.
-    const { rows } = await this.pool.query<ApprovalRow>(
-      "UPDATE approvals SET status = $2, reason = $3, decided_at = $4 WHERE id = $1 AND status = 'pending' RETURNING *",
-      [id, status, reason, decidedAt],
-    );
-    return rows[0] ? toApproval(rows[0]) : null;
+  async decideApproval(id: string, status: Exclude<ApprovalStatus, "pending">, reason: string | null, decidedAt: string, operatorId?: string, audit?: LedgerInput): Promise<Approval | null> {
+    return this.transaction(async (client) => {
+      // Atomic: only one decision wins, subsequent ones touch no row.
+      const { rows } = await client.query<ApprovalRow>(
+        "UPDATE approvals SET status = $2, reason = $3, decided_at = $4, operator_id = $5 WHERE id = $1 AND status = 'pending' RETURNING *",
+        [id, status, reason, decidedAt, operatorId ?? null],
+      );
+      if (rows[0] && audit) await insertChained(client, audit);
+      return rows[0] ? toApproval(rows[0]) : null;
+    });
   }
 
   async listApprovals(options: { status?: ApprovalStatus; limit?: number } = {}): Promise<Approval[]> {
@@ -478,8 +454,8 @@ export class PgStore implements Store {
       }
       const id = randomUUID();
       await client.query(
-        "INSERT INTO agent_reservations (id, agent_id, day, amount, action, model, request_hash) VALUES ($1, $2, $3, $4, $5, $6, $7)",
-        [id, agentId, day, amount, meta?.action ?? null, meta?.model ?? null, meta?.requestHash ?? null],
+        "INSERT INTO agent_reservations (id, agent_id, day, amount, action, model, request_hash, policy_rev) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
+        [id, agentId, day, amount, meta?.action ?? null, meta?.model ?? null, meta?.requestHash ?? null, meta?.policyRev ?? null],
       );
       await client.query("COMMIT");
       return id;
@@ -532,8 +508,8 @@ export class PgStore implements Store {
       try {
         await client.query("BEGIN");
         await client.query("SELECT pg_advisory_xact_lock($1)", [LEDGER_LOCK]);
-        const { rows } = await client.query<{ id: string; agent_id: string; day: string; amount: string; action: string | null; model: string | null; request_hash: string | null }>(
-          `SELECT id, agent_id, day, amount, action, model, request_hash FROM agent_reservations
+        const { rows } = await client.query<{ id: string; agent_id: string; day: string; amount: string; action: string | null; model: string | null; request_hash: string | null; policy_rev: string | null }>(
+          `SELECT id, agent_id, day, amount, action, model, request_hash, policy_rev FROM agent_reservations
             WHERE created_at < now() - ($1 * interval '1 millisecond') ORDER BY created_at, id LIMIT 1`,
           [reservationTtlMs],
         );
@@ -548,6 +524,7 @@ export class PgStore implements Store {
           const entry = await insertChained(client, {
             ts: new Date().toISOString(),
             agentId: r.agent_id,
+            ...(r.policy_rev ? { policyRev: r.policy_rev } : {}),
             action: r.action ?? INTERRUPTED_FALLBACK_ACTION,
             model: r.model,
             verdict: "allowed",
@@ -618,6 +595,11 @@ export class PgStore implements Store {
     } finally {
       client.release(broken ? true : undefined);
     }
+  }
+
+  async ledgerHead(): Promise<{ sequence: number; head_hash: string }> {
+    const { rows } = await this.pool.query<{ seq: string; hash: string }>("SELECT seq, hash FROM ledger ORDER BY seq DESC LIMIT 1");
+    return { sequence: Number(rows[0]?.seq ?? 0), head_hash: rows[0]?.hash ?? GENESIS_HASH };
   }
 
   async listLedger(options: LedgerQuery = {}): Promise<LedgerEntry[]> {

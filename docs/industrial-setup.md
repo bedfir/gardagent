@@ -21,9 +21,9 @@ In this example:
 - `read_work_order`, any tool starting with `get_`, and `list_inventory` are READ tools.
 - `update_work_order`, `create_purchase_order`, or any other tool is a WRITE tool.
 
-## What is governed: `tools/call` only
+## What is governed
 
-Gardagent applies the allowed-tools list, the read/write classification, human approval and the ledger to MCP `tools/call` requests only. Any other method sent to `/mcp/<server>` (`resources/read`, `resources/list`, `prompts/get`, `prompts/list`, `initialize`, `ping`, ...) is relayed to the MCP server with no rule check and no ledger row, so an agent with a valid key can read every resource and prompt the server exposes, and those reads leave no trace in the ledger. If the data behind a resource matters, make the MCP server itself enforce access, or expose it as a tool so that it is governed and logged. Batches are rejected.
+Gardagent governs and journals tool calls, initialization, tool listings and admitted notifications; ping is local and journaled. In enforce mode listings and capabilities are filtered, resources/prompts and undeclared methods are refused, and server messages are screened. No unsupported method is silently forwarded. Streamable HTTP POST is the only carried transport; batches, GET and DELETE are refused. Observe mode relays policy violations with recorded evidence, while malformed framing remains refused. See the [complete MCP matrix](mcp-matrix.md) before configuring a client.
 
 ## Why writes require human approval
 

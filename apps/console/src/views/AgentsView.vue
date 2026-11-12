@@ -14,6 +14,8 @@ const name = ref("");
 const models = ref("");
 const budget = ref("");
 const unlimited = ref(false);
+const requestsPerMinute = ref("");
+const maxConcurrentRequests = ref("");
 const tools = ref("");
 const approval = ref("");
 const creating = ref(false);
@@ -32,6 +34,8 @@ const editModels = ref("");
 const editBudget = ref("0");
 const editTools = ref("");
 const editApproval = ref("");
+const editRequestsPerMinute = ref("0");
+const editMaxConcurrentRequests = ref("0");
 const editError = ref("");
 const confirmingId = ref("");
 const rotatingId = ref("");
@@ -45,6 +49,8 @@ const parseModels = (text: string) =>
 /** A positive budget that rounds to 0 micro-USD would be stored as 0, i.e. "no cap": the gateway refuses it, so do we. */
 const tooSmall = (usd: number) => usd > 0 && Math.round(usd * 1_000_000) === 0;
 const parseBudget = (value: string | number) => (typeof value === "number" ? value : Number(value.replace(",", ".") || "0"));
+const MAX_INT32 = 2_147_483_647;
+const parseRate = (value: string | number) => (typeof value === "number" ? value : Number(value || "0"));
 
 async function refresh() {
   try {
@@ -88,6 +94,8 @@ function startEdit(a: Agent) {
   editBudget.value = String(a.dailyBudgetUsd);
   editTools.value = a.allowedTools.join(", ");
   editApproval.value = a.approvalTools.join(", ");
+  editRequestsPerMinute.value = String(a.requestsPerMinute ?? 0);
+  editMaxConcurrentRequests.value = String(a.maxConcurrentRequests ?? 0);
   editError.value = "";
   confirmingId.value = "";
   rotatingId.value = "";
@@ -115,12 +123,20 @@ async function saveEdit(a: Agent) {
   const dailyBudgetUsd = parseBudget(editBudget.value);
   const allowedTools = parseModels(editTools.value);
   const approvalTools = parseModels(editApproval.value);
+  const requestsPerMinute = parseRate(editRequestsPerMinute.value);
+  const maxConcurrentRequests = parseRate(editMaxConcurrentRequests.value);
   if (allowedModels.length === 0) return void (editError.value = t("agents.errModels"));
   if (!Number.isFinite(dailyBudgetUsd) || dailyBudgetUsd < 0) {
     return void (editError.value = t("agents.errBudgetEdit"));
   }
   if (tooSmall(dailyBudgetUsd)) return void (editError.value = t("agents.errBudgetTiny"));
-  if (await update(a.id, { allowedModels, allowedTools, approvalTools, dailyBudgetUsd })) editingId.value = "";
+  if (!Number.isInteger(requestsPerMinute) || requestsPerMinute < 0 || requestsPerMinute > MAX_INT32) {
+    return void (editError.value = t("agents.errRequestsPerMinute"));
+  }
+  if (!Number.isInteger(maxConcurrentRequests) || maxConcurrentRequests < 0 || maxConcurrentRequests > MAX_INT32) {
+    return void (editError.value = t("agents.errMaxConcurrent"));
+  }
+  if (await update(a.id, { allowedModels, allowedTools, approvalTools, dailyBudgetUsd, requestsPerMinute, maxConcurrentRequests })) editingId.value = "";
 }
 
 /** Share of daily budget already spent, as a percentage (0 if the budget is unlimited). */
@@ -135,6 +151,8 @@ async function create() {
   const dailyBudgetUsd = unlimited.value ? 0 : parseBudget(budget.value);
   const allowedTools = parseModels(tools.value);
   const approvalTools = parseModels(approval.value);
+  const rpm = parseRate(requestsPerMinute.value);
+  const concurrent = parseRate(maxConcurrentRequests.value);
   if (!name.value.trim()) return void (formError.value = t("agents.errName"));
   if (allowedModels.length === 0) return void (formError.value = t("agents.errModels"));
   // A budget is required: either a positive amount or the explicit "no cap" box.
@@ -142,12 +160,18 @@ async function create() {
     return void (formError.value = t("agents.errBudgetCreate"));
   }
   if (tooSmall(dailyBudgetUsd)) return void (formError.value = t("agents.errBudgetTiny"));
+  if (!Number.isInteger(rpm) || rpm < 0 || rpm > MAX_INT32) {
+    return void (formError.value = t("agents.errRequestsPerMinute"));
+  }
+  if (!Number.isInteger(concurrent) || concurrent < 0 || concurrent > MAX_INT32) {
+    return void (formError.value = t("agents.errMaxConcurrent"));
+  }
 
   creating.value = true;
   try {
     const res = await call<CreatedAgent>("/admin/agents", {
       method: "POST",
-      body: { name: name.value.trim(), allowedModels, allowedTools, approvalTools, dailyBudgetUsd, ...(unlimited.value ? { unlimited: true } : {}) },
+      body: { name: name.value.trim(), allowedModels, allowedTools, approvalTools, dailyBudgetUsd, requestsPerMinute: rpm, maxConcurrentRequests: concurrent, ...(unlimited.value ? { unlimited: true } : {}) },
     });
     createdKey.value = res.key;
     createdName.value = res.agent.name;
@@ -158,6 +182,8 @@ async function create() {
     tools.value = "";
     approval.value = "";
     budget.value = "";
+    requestsPerMinute.value = "";
+    maxConcurrentRequests.value = "";
     unlimited.value = false;
     await refresh();
   } catch (e) {
@@ -212,6 +238,8 @@ onMounted(refresh);
             <th scope="col">{{ t("agents.colTools") }}</th>
             <th scope="col">{{ t("agents.colApproval") }}</th>
             <th scope="col" class="num">{{ t("agents.colBudget") }}</th>
+            <th scope="col" class="num">{{ t("agents.colRequestsPerMinute") }}</th>
+            <th scope="col" class="num">{{ t("agents.colMaxConcurrent") }}</th>
             <th scope="col">{{ t("agents.colSpend") }}</th>
             <th scope="col">{{ t("agents.colStatus") }}</th>
             <th scope="col">{{ t("agents.colActions") }}</th>
@@ -258,6 +286,34 @@ onMounted(refresh);
                 :aria-label="t('agents.editBudgetAria')"
               />
               <template v-else>{{ budgetLabel(a.dailyBudgetUsd) }}</template>
+            </td>
+            <td :data-label="t('agents.dlRequestsPerMinute')" class="num mono">
+              <input
+                v-if="editingId === a.id"
+                v-model="editRequestsPerMinute"
+                class="inline-input"
+                type="number"
+                inputmode="numeric"
+                min="0"
+                step="1"
+                :max="MAX_INT32"
+                :aria-label="t('agents.editRequestsPerMinuteAria')"
+              />
+              <template v-else>{{ a.requestsPerMinute ?? 0 }}</template>
+            </td>
+            <td :data-label="t('agents.dlMaxConcurrent')" class="num mono">
+              <input
+                v-if="editingId === a.id"
+                v-model="editMaxConcurrentRequests"
+                class="inline-input"
+                type="number"
+                inputmode="numeric"
+                min="0"
+                step="1"
+                :max="MAX_INT32"
+                :aria-label="t('agents.editMaxConcurrentAria')"
+              />
+              <template v-else>{{ a.maxConcurrentRequests ?? 0 }}</template>
             </td>
             <td :data-label="t('agents.colSpend')" class="spend">
               <template v-if="a.dailyBudgetUsd > 0">
@@ -347,6 +403,16 @@ onMounted(refresh);
       <label class="field">
         <span><input v-model="unlimited" type="checkbox" /> {{ t("agents.fUnlimited") }}</span>
         <small class="hint">{{ t("agents.fUnlimitedHint") }}</small>
+      </label>
+      <label class="field">
+        <span>{{ t("agents.fRequestsPerMinute") }}</span>
+        <input v-model="requestsPerMinute" type="number" inputmode="numeric" min="0" step="1" :max="MAX_INT32" />
+        <small class="hint">{{ t("agents.fRequestsPerMinuteHint") }}</small>
+      </label>
+      <label class="field">
+        <span>{{ t("agents.fMaxConcurrent") }}</span>
+        <input v-model="maxConcurrentRequests" type="number" inputmode="numeric" min="0" step="1" :max="MAX_INT32" />
+        <small class="hint">{{ t("agents.fMaxConcurrentHint") }}</small>
       </label>
       <button type="submit" class="btn btn-primary" :disabled="creating">{{ creating ? t("agents.creating") : t("agents.create") }}</button>
     </form>

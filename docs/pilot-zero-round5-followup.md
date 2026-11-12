@@ -1,5 +1,9 @@
 # End-to-end validation round 5, follow-up of the unexplained points (v0.2-9), 2026-10-22
 
+Historical report for the build named below, not current v1 behavior. See
+[v1 readiness](v1-readiness.md) for current evidence and gaps and [reference.md](reference.md)
+for implemented behavior. Historical observations and unresolved limits are retained.
+
 Read-only investigation on the test server (`<test-server>`, test only), main code `2eba5d4`, enforce mode. No product
 code and no existing file was changed. Scripts live outside the repo (`<home>/verif/`, server `~/verif/`). No secret was printed.
 Point 4 was run for `closed stop` only; `closed pause` was not run (token budget).

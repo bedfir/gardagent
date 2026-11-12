@@ -1,7 +1,8 @@
-import { randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import { Readable } from "node:stream";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import {
+  policyRevision,
   budgetDay,
   canonicalJson,
   generateAgentKey,
@@ -32,6 +33,8 @@ interface CreateAgentBody {
   allowedTools?: unknown;
   approvalTools?: unknown;
   dailyBudgetUsd?: unknown;
+  requestsPerMinute?: unknown;
+  maxConcurrentRequests?: unknown;
   unlimited?: unknown;
 }
 
@@ -113,12 +116,15 @@ function parseLedgerFilters(query: Record<string, unknown>): { filters: Filters 
 /** Public view of an agent: the key fingerprint stays internal. */
 function publicAgent(agent: Agent, spentToday: number, reservedToday = 0) {
   return {
+    policyRev: policyRevision(agent).id,
     id: agent.id,
     name: agent.name,
     allowedModels: agent.allowedModels,
     allowedTools: agent.allowedTools,
     approvalTools: agent.approvalTools,
     dailyBudgetUsd: agent.dailyBudget / 1_000_000,
+    requestsPerMinute: agent.requestsPerMinute ?? 0,
+    maxConcurrentRequests: agent.maxConcurrentRequests ?? 0,
     spentTodayUsd: spentToday / 1_000_000,
     reservedTodayUsd: reservedToday / 1_000_000,
     active: agent.active,
@@ -150,7 +156,7 @@ export function registerAdmin(app: FastifyInstance, deps: { config: GatewayConfi
   const agentCache = agentCacheFor(store, agentCacheOptions(config));
 
   /** The ledger row of an admin action. */
-  function auditInput(action: string, agentId: string, reason: string | null, content: unknown): LedgerInput {
+  function auditInput(action: string, agentId: string | null, reason: string | null, content: unknown): LedgerInput {
     return {
       ts: new Date().toISOString(),
       agentId,
@@ -167,23 +173,52 @@ export function registerAdmin(app: FastifyInstance, deps: { config: GatewayConfi
     };
   }
 
-  /** An admin action leaves a row in the chained ledger. */
-  async function audit(action: string, agentId: string, reason: string | null, content: unknown): Promise<void> {
-    await store.appendLedger(auditInput(action, agentId, reason, content));
-  }
+  const operators = new WeakMap<FastifyRequest, string>();
 
   app.register(async (admin) => {
     admin.addHook("onRequest", async (request: FastifyRequest, reply) => {
       const header = request.headers.authorization ?? "";
       const token = header.toLowerCase().startsWith("bearer ") ? header.slice(7).trim() : "";
-      if (!token || !safeEqual(token, config.adminToken)) {
+      let operatorId: string | undefined;
+      if (token && safeEqual(sha256(token), sha256(config.adminToken))) operatorId = "bootstrap";
+      else if (token.startsWith("gaop_")) operatorId = (await store.findOperator(sha256(token)))?.id;
+      if (!operatorId) {
         app.adminAuthLimiter.recordFailure(request.ip);
         return reply.code(401).send({ error: "Invalid admin token." });
       }
+      operators.set(request, operatorId);
+    });
+
+    admin.get("/admin/operators", async () => ({ operators: await store.listOperators() }));
+    admin.post("/admin/operators", async (request, reply) => {
+      if (operators.get(request) !== "bootstrap") return reply.code(403).send({ error: "Only bootstrap may manage operators." });
+      const label = ((request.body ?? {}) as { label?: unknown }).label;
+      if (typeof label !== "string" || !label.trim() || label.trim().length > 200) return reply.code(400).send({ error: "A label of 1 to 200 characters is required." });
+      const operator = { id: randomUUID(), label: label.trim(), createdAt: new Date().toISOString(), revokedAt: null };
+      const token = "gaop_" + randomBytes(32).toString("base64url");
+      await store.createOperator(operator, sha256(token), { ...auditInput("admin.operator.create", null, null, { id: operator.id, label: operator.label }), operatorId: operators.get(request)! });
+      return reply.code(201).header("cache-control", "no-store").send({ operator, token });
+    });
+    admin.post("/admin/operators/:id/revoke", async (request, reply) => {
+      if (operators.get(request) !== "bootstrap") return reply.code(403).send({ error: "Only bootstrap may manage operators." });
+      const { id } = request.params as { id: string };
+      const revoked = await store.revokeOperator(id, new Date().toISOString(), { ...auditInput("admin.operator.revoke", null, null, { id }), operatorId: operators.get(request)! });
+      if (!revoked) return reply.code(404).send({ error: "Active operator not found." });
+      return { revoked: true };
+    });
+    admin.get("/admin/policy-revisions/:id", async (request, reply) => {
+      const { id } = request.params as { id: string };
+      const canonical = await store.getPolicyRevision(id);
+      if (canonical === null) return reply.code(404).send({ error: "Policy revision not found." });
+      return { id, policy: JSON.parse(canonical) };
     });
 
     admin.post("/admin/agents", async (request, reply) => {
       const body = (request.body ?? {}) as CreateAgentBody;
+      for (const field of ["requestsPerMinute", "maxConcurrentRequests"] as const) {
+        const value = body[field];
+        if (value !== undefined && (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0 || value > 2147483647)) return reply.code(400).send({ error: `${field} must be a non-negative integer at most 2147483647 (0 means unlimited).` });
+      }
       const name = typeof body.name === "string" ? body.name.trim() : "";
       const models = Array.isArray(body.allowedModels) ? body.allowedModels.filter((m) => typeof m === "string") : [];
       const budget = body.dailyBudgetUsd;
@@ -218,16 +253,17 @@ export function registerAdmin(app: FastifyInstance, deps: { config: GatewayConfi
         allowedTools: tools,
         approvalTools,
         dailyBudget: budgetMicro.micro,
+        requestsPerMinute: body.requestsPerMinute as number | undefined,
+        maxConcurrentRequests: body.maxConcurrentRequests as number | undefined,
         active: true,
       };
-      await store.createAgent(agent);
-      await audit("admin.agent.create", agent.id, null, {
+      await store.createAgent(agent, { ...auditInput("admin.agent.create", agent.id, null, {
         name: agent.name,
         allowedModels: agent.allowedModels,
         allowedTools: agent.allowedTools,
         approvalTools: agent.approvalTools,
         dailyBudget: agent.dailyBudget,
-      });
+      }), operatorId: operators.get(request)! });
       // The key is returned only here: it is stored only as a fingerprint.
       return reply.code(201).send({ agent: publicAgent(agent, 0), key });
     });
@@ -248,6 +284,10 @@ export function registerAdmin(app: FastifyInstance, deps: { config: GatewayConfi
       if (!current) return reply.code(404).send({ error: "Agent not found." });
 
       const body = (request.body ?? {}) as Record<string, unknown>;
+      for (const field of ["requestsPerMinute", "maxConcurrentRequests"] as const) {
+        const value = body[field];
+        if (value !== undefined && (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0 || value > 2147483647)) return reply.code(400).send({ error: `${field} must be a non-negative integer at most 2147483647 (0 means unlimited).` });
+      }
       const patch: AgentPatch = {};
       if ("name" in body) {
         if (typeof body.name !== "string" || !body.name.trim()) {
@@ -285,6 +325,9 @@ export function registerAdmin(app: FastifyInstance, deps: { config: GatewayConfi
         if (typeof body.active !== "boolean") return reply.code(400).send({ error: "« active » must be a boolean." });
         patch.active = body.active;
       }
+      for (const field of ["requestsPerMinute", "maxConcurrentRequests"] as const) {
+        if (body[field] !== undefined) patch[field] = body[field] as number;
+      }
       if (Object.keys(patch).length === 0) {
         return reply.code(400).send({ error: "Provide at least one field to update." });
       }
@@ -292,6 +335,9 @@ export function registerAdmin(app: FastifyInstance, deps: { config: GatewayConfi
       // Keep (and log) only what actually changes.
       const changed: AgentPatch = {};
       const fields: string[] = [];
+      for (const field of ["requestsPerMinute", "maxConcurrentRequests"] as const) {
+        if (patch[field] !== undefined && patch[field] !== (current[field] ?? 0)) { changed[field] = patch[field]; fields.push(field); }
+      }
       if (patch.name !== undefined && patch.name !== current.name) {
         changed.name = patch.name;
         fields.push("name");
@@ -325,12 +371,11 @@ export function registerAdmin(app: FastifyInstance, deps: { config: GatewayConfi
       // from here on this process no longer serves the old entry.
       let updated: Agent | null;
       try {
-        updated = await store.updateAgent(id, changed);
+        updated = await store.updateAgent(id, changed, { ...auditInput("admin.agent.update", id, fields.join(","), changed), operatorId: operators.get(request)! });
       } finally {
         agentCache.invalidateAgent(id);
       }
       if (!updated) return reply.code(404).send({ error: "Agent not found." });
-      await audit("admin.agent.update", id, fields.join(","), changed);
       return { agent: publicAgent(updated, spent, reserved) };
     });
 
@@ -356,7 +401,7 @@ export function registerAdmin(app: FastifyInstance, deps: { config: GatewayConfi
         let key = "";
         let updated: Agent | null = null;
         // Neither the key nor its hash goes into the ledger. The row is written in the same transaction as the key.
-        const rotateAudit = auditInput("admin.agent.rotate-key", id, null, { agentId: id, action: "rotate-key" });
+        const rotateAudit = { ...auditInput("admin.agent.rotate-key", id, null, { agentId: id, action: "rotate-key" }), operatorId: operators.get(request)! };
         try {
           // The hash column is unique: on the (practically impossible) collision, generate another key.
           for (let attempt = 0; ; attempt++) {
@@ -411,32 +456,30 @@ export function registerAdmin(app: FastifyInstance, deps: { config: GatewayConfi
     });
 
     /** Human decision: atomic (409 if already decided), logged, then the agent's request is woken up. */
-    async function decide(id: string, status: "approved" | "rejected", reason: string | null, reply: FastifyReply) {
+    async function decide(id: string, status: "approved" | "rejected", reason: string | null, reply: FastifyReply, operatorId: string) {
       const existing = await store.getApproval(id);
       if (!existing) return reply.code(404).send({ error: "Approval request not found." });
-      const decided = await store.decideApproval(id, status, reason, new Date().toISOString());
-      if (!decided) return reply.code(409).send({ error: `Request already decided (${existing.status}).` });
-      await store.appendLedger({
-        ts: decided.decidedAt!,
-        agentId: decided.agentId,
+      const decidedAt = new Date().toISOString();
+      const decided = await store.decideApproval(id, status, reason, decidedAt, operatorId, {
+        ts: decidedAt,
+        agentId: existing.agentId,
         action: DECIDED,
-        model: `${decided.server}/${decided.tool}#${decided.accessClass}`,
+        model: `${existing.server}/${existing.tool}#${existing.accessClass}`,
         verdict: status === "approved" ? "allowed" : "denied",
         reason: status === "approved" ? "approved" : "rejected",
-        upstreamStatus: null,
-        promptTokens: 0,
-        completionTokens: 0,
-        cost: 0,
-        requestHash: decided.argsHash,
-        responseHash: null,
+        upstreamStatus: null, promptTokens: 0, completionTokens: 0, cost: 0,
+        requestHash: existing.argsHash, responseHash: null,
+        ...(existing.policyRev ? { policyRev: existing.policyRev } : {}),
+        approvalRef: id, operatorId,
       });
+      if (!decided) return reply.code(409).send({ error: `Request already decided (${existing.status}).` });
       approvals.notify(id);
       return { approval: decided };
     }
 
     admin.post("/admin/approvals/:id/approve", async (request, reply) => {
       const { id } = request.params as { id: string };
-      return decide(id, "approved", null, reply);
+      return decide(id, "approved", null, reply, operators.get(request)!);
     });
 
     admin.post("/admin/approvals/:id/reject", async (request, reply) => {
@@ -446,7 +489,7 @@ export function registerAdmin(app: FastifyInstance, deps: { config: GatewayConfi
         return reply.code(400).send({ error: "« reason » must be a string." });
       }
       const reason = typeof raw === "string" && raw.trim() ? raw.trim().slice(0, 500) : null;
-      return decide(id, "rejected", reason, reply);
+      return decide(id, "rejected", reason, reply, operators.get(request)!);
     });
 
     admin.get("/admin/stats", async (request, reply) => {
@@ -514,20 +557,74 @@ export function registerAdmin(app: FastifyInstance, deps: { config: GatewayConfi
       return reply.send(Readable.from(csvChunks(store, names, parsed.filters)));
     });
 
-    admin.get("/admin/ledger/verify", async () => {
+    const checkpointFormat = "gardagent-checkpoint-v1";
+    const checkpoint = async () => ({ format: checkpointFormat, ...await store.ledgerHead(), created_at: new Date().toISOString() });
+    function validCheckpoint(value: unknown): value is { format: string; sequence: number; head_hash: string; created_at: string } {
+      if (!value || typeof value !== "object") return false;
+      const c = value as Record<string, unknown>;
+      return c.format === checkpointFormat && Number.isSafeInteger(c.sequence) &&
+        (c.sequence as number) >= 0 && (c.sequence as number) < Number.MAX_SAFE_INTEGER &&
+        typeof c.head_hash === "string" && /^[0-9a-f]{64}$/.test(c.head_hash) &&
+        (c.sequence !== 0 || c.head_hash === GENESIS_HASH) &&
+        typeof c.created_at === "string" && Number.isFinite(Date.parse(c.created_at));
+    }
+
+    admin.get("/admin/ledger/checkpoint", async (_request, reply) => {
+      return reply.header("cache-control", "no-store").send(await checkpoint());
+    });
+
+    admin.get("/admin/ledger/export.ndjson", async (request, reply) => {
+      const q = request.query as Record<string, unknown>;
+      const integer = (v: unknown, fallback: number) => v === undefined ? fallback :
+        typeof v === "string" && /^(0|[1-9][0-9]*)$/.test(v) && Number.isSafeInteger(Number(v)) ? Number(v) : NaN;
+      const afterSeq = integer(q.afterSeq, 0);
+      const limit = integer(q.limit, PAGE);
+      const head = await checkpoint();
+      const sequence = integer(q.headSequence, head.sequence);
+      const hash = q.headHash ?? head.head_hash;
+      if (!Number.isSafeInteger(afterSeq) || !Number.isSafeInteger(sequence) || sequence >= Number.MAX_SAFE_INTEGER ||
+          afterSeq > sequence || !Number.isSafeInteger(limit) || limit < 1 || limit > PAGE ||
+          typeof hash !== "string" || !/^[0-9a-f]{64}$/.test(hash) ||
+          ((q.headSequence === undefined) !== (q.headHash === undefined)) ||
+          (afterSeq > 0 && q.headSequence === undefined)) {
+        return reply.code(400).send({ error: "Invalid export cursor, head or limit (1..1000)." });
+      }
+      const anchor = sequence === 0 ? GENESIS_HASH :
+        (await store.listLedger({ afterSeq: sequence - 1, beforeSeq: sequence + 1, limit: 1 }))[0]?.hash;
+      if (anchor !== hash) return reply.code(409).send({ error: "Export head is no longer present." });
+      const entries = await store.listLedger({ afterSeq, beforeSeq: sequence + 1, limit });
+      const last = entries.at(-1)?.seq ?? afterSeq;
+      const metadata = { type: "metadata", checkpoint: { ...head, sequence, head_hash: hash }, nextAfterSeq: last < sequence ? last : null };
+      return reply.header("cache-control", "no-store").type("application/x-ndjson")
+        .send([JSON.stringify(metadata), ...entries.map((entry) => JSON.stringify(entry))].join("\n") + "\n");
+    });
+
+    async function verify(expected?: { sequence: number; head_hash: string }) {
+      const head = await store.ledgerHead();
       let afterSeq = 0;
       let prevHash = GENESIS_HASH;
+      let lastVersion: 1 | 2 = 1;
       let total = 0;
+      let contains = expected?.sequence === 0 && expected.head_hash === GENESIS_HASH;
       for (;;) {
-        const page = await store.listLedger({ afterSeq, limit: PAGE });
+        const page = await store.listLedger({ afterSeq, beforeSeq: head.sequence + 1, limit: PAGE });
         if (page.length === 0) break;
-        const check = verifyChain(page, prevHash);
-        if (!check.valid) return { valid: false, checked: total, brokenAtSeq: check.brokenAtSeq, problem: check.problem };
+        if (page[0]!.seq !== afterSeq + 1) return { valid: false, checked: total, brokenAtSeq: page[0]!.seq, problem: "seq_gap", ...(expected ? { checkpointContained: false } : {}) };
+        const check = verifyChain(page, prevHash, lastVersion);
+        if (!check.valid) return { valid: false, checked: total, brokenAtSeq: check.brokenAtSeq, problem: check.problem, ...(expected ? { checkpointContained: false } : {}) };
+        if (expected && page.some((e) => e.seq === expected.sequence && e.hash === expected.head_hash)) contains = true;
         total += page.length;
         prevHash = check.lastHash;
+        lastVersion = check.lastVersion;
         afterSeq = page.at(-1)!.seq;
       }
-      return { valid: true, checked: total, lastHash: prevHash };
+      if (afterSeq !== head.sequence || prevHash !== head.head_hash) return { valid: false, checked: total, problem: "head_mismatch", ...(expected ? { checkpointContained: false } : {}) };
+      return { valid: true, checked: total, lastHash: prevHash, ...(expected ? { checkpointContained: contains } : {}) };
+    }
+    admin.get("/admin/ledger/verify", async () => verify());
+    admin.post("/admin/ledger/verify", async (request, reply) => {
+      if (!validCheckpoint(request.body)) return reply.code(400).send({ error: "Expected a gardagent-checkpoint-v1 checkpoint." });
+      return reply.header("cache-control", "no-store").send(await verify(request.body));
     });
   });
 }

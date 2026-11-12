@@ -2,6 +2,8 @@ import type { Messages } from "./fr";
 
 /** English dictionary: must define exactly the keys of fr.ts (enforced by the Messages type). */
 export const en: Messages = {
+  "col.operator": "Operator",
+  "col.policyRev": "Policy revision",
   "app.title": "Gardagent console",
 
   "nav.label": "Sections",
@@ -98,6 +100,8 @@ export const en: Messages = {
   "problem.hash_mismatch": "content modified",
   "problem.link_mismatch": "broken chain",
   "problem.seq_gap": "missing row",
+  "problem.unsupported_format": "unsupported ledger format version",
+  "problem.invalid_format": "invalid ledger content or version order",
   "problem.unknown": "unknown problem",
 
   "ledger.title": "Ledger",
@@ -242,4 +246,16 @@ export const en: Messages = {
   "agents.errBudgetTiny": "The budget must be at least 0.000001 USD (a smaller amount would mean no cap). Use 0 for no cap.",
   "agents.errName": "Enter the agent's name.",
   "agents.errBudgetCreate": "Enter a daily budget greater than zero, or tick “No cap (unlimited)”.",
+  "agents.colRequestsPerMinute": "RPM limit",
+  "agents.colMaxConcurrent": "Concurrent limit",
+  "agents.dlRequestsPerMinute": "RPM limit",
+  "agents.dlMaxConcurrent": "Concurrent limit",
+  "agents.editRequestsPerMinuteAria": "Requests per minute limit (0 = unlimited)",
+  "agents.editMaxConcurrentAria": "Max concurrent requests (0 = unlimited)",
+  "agents.fRequestsPerMinute": "Requests per minute limit",
+  "agents.fRequestsPerMinuteHint": "0 means unlimited.",
+  "agents.fMaxConcurrent": "Max concurrent requests",
+  "agents.fMaxConcurrentHint": "0 means unlimited.",
+  "agents.errRequestsPerMinute": "Requests per minute must be a non-negative integer no greater than 2147483647.",
+  "agents.errMaxConcurrent": "Max concurrent requests must be a non-negative integer no greater than 2147483647.",
 };

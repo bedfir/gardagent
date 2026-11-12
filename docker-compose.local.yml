@@ -1,0 +1,68 @@
+# Isolated local demonstration; no provider credentials required.
+services:
+  postgres:
+    profiles: [local]
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: gardagent
+      POSTGRES_USER: gardagent
+      POSTGRES_PASSWORD: local-demo-not-a-secret
+    volumes:
+      - local_pg:/var/lib/postgresql/data
+    healthcheck:
+      test: [CMD-SHELL, "pg_isready -U gardagent -d gardagent"]
+      interval: 2s
+      retries: 30
+  model:
+    profiles: [local]
+    image: ollama/ollama:0.11.6
+    volumes:
+      - local_models:/root/.ollama
+    healthcheck:
+      test: [CMD, ollama, list]
+      interval: 2s
+      retries: 60
+  model-init:
+    profiles: [local]
+    image: ollama/ollama:0.11.6
+    environment:
+      OLLAMA_HOST: http://model:11434
+    entrypoint: [ollama, pull, qwen2.5:0.5b]
+    depends_on:
+      model:
+        condition: service_healthy
+  fixture:
+    profiles: [local]
+    image: node:22-alpine
+    working_dir: /example
+    command: [node, server.mjs]
+    volumes:
+      - ./examples/mcp/server.mjs:/example/server.mjs:ro
+  gateway:
+    profiles: [local]
+    build: .
+    environment:
+      DATABASE_URL: postgres://gardagent:local-demo-not-a-secret@postgres:5432/gardagent
+      GARDAGENT_ADMIN_TOKEN: ${GARDAGENT_ADMIN_TOKEN:?Generate a bootstrap token as shown in README.md}
+      GARDAGENT_MODE: enforce
+      UPSTREAM_BASE_URL: http://model:11434
+      UPSTREAM_API_KEY: local-dummy-not-a-provider-key
+      UPSTREAM_TIMEOUT_MS: '300000'
+      ANTHROPIC_UPSTREAM_BASE_URL: http://fixture:8090
+      GARDAGENT_PRICES: '{"qwen2.5:0.5b":{"input":0,"output":0},"demo-anthropic":{"input":0,"output":0}}'
+      GARDAGENT_MCP_SERVERS: '{"demo":{"url":"http://fixture:8090/mcp","headers":{},"readTools":["read_note"]}}'
+    depends_on:
+      postgres:
+        condition: service_healthy
+      model-init:
+        condition: service_completed_successfully
+      fixture:
+        condition: service_started
+    ports:
+      - '127.0.0.1:8080:8080'
+    volumes:
+      - local_spool:/app/spool
+volumes:
+  local_pg:
+  local_models:
+  local_spool:

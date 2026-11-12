@@ -299,6 +299,8 @@ onBeforeUnmount(() => {
             <th scope="col">{{ t("col.time") }}</th>
             <th scope="col">{{ t("col.agent") }}</th>
             <th scope="col">{{ t("col.model") }}</th>
+            <th scope="col">{{ t("col.operator") }}</th>
+            <th scope="col">{{ t("col.policyRev") }}</th>
             <th scope="col">{{ t("col.verdict") }}</th>
             <th scope="col">{{ t("col.reason") }}</th>
             <th scope="col" class="num">{{ t("col.tokens") }}</th>
@@ -311,6 +313,8 @@ onBeforeUnmount(() => {
             <td :data-label="t('col.time')">{{ localTime(r.ts) }}</td>
             <td :data-label="t('col.agent')" :class="{ muted: !r.agentId || !agentNames.has(r.agentId) }">{{ agentLabel(r.agentId) }}</td>
             <td :data-label="t('col.model')" class="mono">{{ r.model ?? "—" }}</td>
+            <td :data-label="t('col.operator')" class="mono small">{{ r.operatorId ?? "—" }}</td>
+            <td :data-label="t('col.policyRev')" class="mono small" style="overflow-wrap: anywhere">{{ r.policyRev ?? "—" }}</td>
             <td :data-label="t('col.verdict')">
               <span class="badge" :class="r.verdict === 'allowed' ? 'badge-ok' : 'badge-ko'">
                 {{ r.verdict === "allowed" ? t("ledger.verdictAllowed") : t("ledger.verdictDenied") }}

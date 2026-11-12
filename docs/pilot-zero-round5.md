@@ -1,5 +1,9 @@
 # End-to-end validation, round 5 and real outage scenarios (v0.2-8), 2026-10-22
 
+Historical report for the build named below, not current v1 behavior. See
+[v1 readiness](v1-readiness.md) for current evidence and gaps and [reference.md](reference.md)
+for implemented behavior. Historical observations and unresolved limits are retained.
+
 Test server (`<test-server>`, test only, no real data). Build under test: main at `2eba5d4`
 (ledger filters), deployed by rsync (excluding `deploy/.env`, `.git`, `node_modules`, `dist`, backups, `.pnpm-store`;
 no `--delete`), `docker compose build --no-cache gateway`, `up -d`. No product code was modified. All figures below
@@ -133,7 +137,7 @@ List pages are capped at 1 000 rows (`limit=1000`), so the unfiltered and `allow
 | `GET /admin/ledger/export.csv?minCost=0.0001` | 200 | 749 lines (header + 748) | 748 |
 | `GET /admin/ledger/facets` without token | 401 | - | - |
 
-Not checked: the console pages themselves in a browser, the `model` filter, the combination of several filters in the list endpoint.
+At the time of this manual run, console pages in a browser, the model filter and combined list filters were not checked. The M11 Chromium suite now covers the built console against a real in-memory gateway: login and wrong-token refusal, agent listing and creation, approval and rejection, ledger filters, integrity results, and French/English switching. See [browser test coverage](../e2e/README.md) for scope and execution limits; historical manual results above are unchanged.
 
 ## 7. State left behind
 

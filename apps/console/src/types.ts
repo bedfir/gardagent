@@ -6,6 +6,8 @@ export interface Agent {
   allowedTools: string[];
   approvalTools: string[];
   dailyBudgetUsd: number;
+  requestsPerMinute?: number;
+  maxConcurrentRequests?: number;
   /** Today's spend (UTC) in dollars. */
   spentTodayUsd: number;
   /** Budget held by in-flight requests, in dollars. */
@@ -43,6 +45,9 @@ export interface Stats {
 }
 
 export interface LedgerEntry {
+  policyRev?: string;
+  operatorId?: string;
+  approvalRef?: string;
   seq: number;
   ts: string;
   agentId: string | null;
@@ -81,6 +86,8 @@ export interface CreatedAgent {
 }
 
 export interface Approval {
+  policyRev?: string;
+  operatorId?: string;
   id: string;
   createdAt: string;
   agentId: string;

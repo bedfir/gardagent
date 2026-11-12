@@ -1,0 +1,78 @@
+{
+  "allowed": {
+    "method": "POST",
+    "route": "/v1/messages",
+    "request": {
+      "model": "claude-contract",
+      "max_tokens": 64,
+      "messages": [
+        {
+          "role": "user",
+          "content": "hello"
+        }
+      ]
+    },
+    "status": 200,
+    "response": {
+      "id": "msg_contract",
+      "type": "message",
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "hello"
+        }
+      ],
+      "model": "claude-contract",
+      "stop_reason": "end_turn",
+      "usage": {
+        "input_tokens": 100,
+        "output_tokens": 50
+      }
+    }
+  },
+  "invalidKey": {
+    "method": "POST",
+    "route": "/v1/messages",
+    "request": {
+      "model": "claude-contract",
+      "max_tokens": 64,
+      "messages": [
+        {
+          "role": "user",
+          "content": "hello"
+        }
+      ]
+    },
+    "status": 401,
+    "response": {
+      "type": "error",
+      "error": {
+        "type": "authentication_error",
+        "message": "Invalid or missing Gardagent agent key."
+      }
+    }
+  },
+  "modelNotAllowed": {
+    "method": "POST",
+    "route": "/v1/messages",
+    "request": {
+      "model": "claude-contract",
+      "max_tokens": 64,
+      "messages": [
+        {
+          "role": "user",
+          "content": "hello"
+        }
+      ]
+    },
+    "status": 403,
+    "response": {
+      "type": "error",
+      "error": {
+        "type": "permission_error",
+        "message": "Model claude-contract is not allowed for agent contract-limited."
+      }
+    }
+  }
+}

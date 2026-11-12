@@ -27,7 +27,7 @@ describe.skipIf(!url)("PgStore (PostgreSQL integration)", () => {
 
   beforeAll(async () => {
     pool = new pg.Pool({ connectionString: url });
-    await pool.query("DROP TABLE IF EXISTS approvals, agent_spend, ledger, agents CASCADE");
+    await pool.query("DROP TABLE IF EXISTS schema_migrations, operators, policy_revisions, approvals, agent_reservations, ledger_idempotency, spend_settlements, agent_spend, ledger, agents CASCADE");
     store = new PgStore(pool);
     await store.migrate();
   });
@@ -167,9 +167,7 @@ describe.skipIf(!url)("PgStore (PostgreSQL integration)", () => {
     expect(verifyChain(await store.listLedger()).valid).toBe(true);
   });
 
-  it("approvals: idempotent migration on a pre-existing database, atomic decision, excluded from aggregate", async () => {
-    await pool.query("ALTER TABLE agents DROP COLUMN approval_tools");
-    await pool.query("DROP TABLE approvals");
+  it("approvals: versioned restart, atomic decision, excluded from aggregate", async () => {
     await store.migrate();
     await store.migrate();
     const cols = await pool.query("SELECT column_name FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = 'agents' AND column_name = 'approval_tools'");

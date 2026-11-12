@@ -1,6 +1,6 @@
 import pg from "pg";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { canonicalJson, MemoryStore, sha256, type LedgerInput, type Store } from "@gardagent/core";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { canonicalJson, chainEntry, MemoryStore, sha256, type LedgerInput, type Store } from "@gardagent/core";
 import { buildApp } from "../src/app.js";
 import { PgStore } from "../src/pg-store.js";
 import { adminHeaders, config, createAgent, fakeFetch, jsonResponse } from "./helpers.js";
@@ -92,6 +92,45 @@ for (const backend of backends) {
       ] as const)("%s %s sans jeton -> 401", async (method, u) => {
         expect((await app.inject({ method, url: u })).statusCode).toBe(401);
       });
+    });
+
+    describe("paged ledger verification", () => {
+      it.each(["valid v2", "v1 regression", "v1 with v2 fields"] as const)(
+        "checks version ordering across one-row pages: %s",
+        async (mode) => {
+          await store.appendLedger(entry({}));
+          await store.appendLedger(entry({}));
+          const list = store.listLedger.bind(store);
+          // Force a small effective page size without changing the production limit.
+          // Rehash the second row to isolate content validation from hash validation.
+          const read = vi.spyOn(store, "listLedger").mockImplementation(async (options) => {
+            const rows = await list({ ...options, limit: 1 });
+            return rows.map((row) => {
+              if (row.seq !== 2 || mode === "valid v2") return row;
+              const { seq, prevHash, hash: _hash, formatVersion: _version, ...input } = row;
+              return chainEntry(seq, prevHash, {
+                ...input,
+                ...(mode === "v1 with v2 fields" ? { operatorId: "test-operator" } : {}),
+              });
+            });
+          });
+          try {
+            const res = await get("/admin/ledger/verify");
+            expect(res.statusCode).toBe(200);
+            if (mode === "valid v2") {
+              expect(res.json()).toMatchObject({ valid: true, checked: 2 });
+              expect(read).toHaveBeenCalledTimes(3);
+            } else {
+              expect(res.json()).toMatchObject({
+                valid: false, checked: 1, brokenAtSeq: 2, problem: "invalid_format",
+              });
+              expect(read).toHaveBeenCalledTimes(2);
+            }
+          } finally {
+            read.mockRestore();
+          }
+        },
+      );
     });
 
     describe("PATCH /admin/agents/:id", () => {

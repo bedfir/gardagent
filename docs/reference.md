@@ -32,7 +32,7 @@ GARDAGENT_MCP_SERVERS={"github":{"url":"https://mcp.example.com/mcp","headers":{
 
 The agent points its MCP client to `http://localhost:8080/mcp/github` with its `ga_…` key as `Authorization: Bearer`. The `Mcp-Session-Id` and `MCP-Protocol-Version` headers are relayed in both directions, as are `text/event-stream` responses. JSON-RPC batches are rejected.
 
-Only `tools/call` is controlled: the tool must appear in the agent's `allowedTools` (`server/tool`, `server/*` or `*`; empty list = no tools), otherwise the gateway answers with a JSON-RPC `-32001` error without calling the server. Every `tools/call` is logged (action `mcp.tools/call`, model `server/tool`, argument fingerprint and never the arguments). `initialize`, `tools/list` and notifications pass through untraced. Without `GARDAGENT_MCP_SERVERS`, the `/mcp` route does not exist.
+For `tools/call`, the tool must appear in the agent's `allowedTools` (`server/tool`, `server/*` or `*`; empty list = no tools), otherwise enforce mode returns JSON-RPC `-32001` without forwarding. Calls record action `mcp.tools/call`, model `server/tool#read|write`, and an argument hash, never the arguments. Initialization and listings are governed and journaled; ping is answered locally and journaled. Listings and capabilities are filtered in enforce mode. Only declared notifications are admitted; resources, prompts, undeclared methods and server requests are refused in enforce mode. Observe mode relays policy violations with observed evidence; malformed framing is always refused. GET and DELETE return 405. See the complete [MCP matrix](mcp-matrix.md). Without `GARDAGENT_MCP_SERVERS`, the `/mcp` route does not exist.
 
 ### Read/write classification
 
@@ -49,7 +49,7 @@ READ tools follow the normal `allowedTools`/`approvalTools` flow. WRITE tools al
 `GARDAGENT_MODE` controls whether the gateway blocks requests or only records them:
 
 - `enforce` (default): policy violations are rejected with the usual errors.
-- `observe`: requests that would be denied are forwarded normally and logged with reason prefixed by `observed:` (for example `observed:model_not_allowed`). Budget reservations still happen but never block, human approvals are skipped, and invalid agent keys are still rejected. Use this mode to measure what the rules would block before enforcing them.
+- `observe`: requests that would be denied are forwarded normally and logged with reason prefixed by `observed:` (for example `observed:model_not_allowed`). Budget reservations still happen but never block, human approvals are skipped, and invalid agent keys are still rejected. Malformed MCP framing and approval-state outage refusals remain blocking. Use this mode to measure what the rules would block before enforcing them.
 
 Set the mode in `.env` (see `.env.example`):
 
@@ -68,7 +68,7 @@ GARDAGENT_MODE=observe
 
 Proof first: if the spool cannot take an entry (directory unwritable, I/O error, or file at `GARDAGENT_SPOOL_MAX_BYTES`, default 64 MiB), the gateway answers 503 instead of passing traffic. During an outage in fail-open: MCP read tools pass, while any tool that needs human approval and any write tool is refused (the approval state lives in the database); admin routes answer 503; agents are recognized from a memory cache of keys seen while the database was up, and unknown keys are refused. When the database returns, the spool is replayed in order into the hash chain, and each line is applied **exactly once**: every spool line has a stable id (generated when it is spooled) and the replay writes the ledger row, the `agent_spend` increment (on the budget day of the original request, not the day of the replay) and the release of the call's orphaned reservation in one transaction, guarded by that id. Replaying the same spool again (crash before the line was removed, an insert that timed out client-side but was committed, a timeout during COMMIT) changes nothing. Rows that went through the spool carry `degraded: true`, sealed in their hash (rows written directly have no such field, so existing hashes are unchanged); they are appended late with the timestamp of the original call, and the chain stays valid. While the database is healthy the gateway also purges budget reservations older than the upstream timeout plus 30 s (never a live one); idempotency keys are kept 30 days.
 
-Interrupted calls: if the gateway process is killed while a call is in flight (restart, crash), the call leaves a budget reservation behind. When the reservation is older than the upstream timeout plus 30 s, housekeeping purges it and, in the same transaction, appends one ledger row for that call: verdict `allowed`, reason `interrupted_no_response`, the agent, the model and request hash that the reservation recorded (null for a reservation created before they were stored), 0 tokens, and **a cost equal to the reserved estimate**. The same amount is added to the agent's daily spend, exactly as for `client_aborted_estimated` (the estimate is a worst case, so the budget stays conservative: the real provider charge, if any, is unknown). The row means "this call was started and never answered: its outcome is unknown"; it is never written for a live in-flight call or one already settled. The reservation id is the idempotency key, so a second run or two gateway instances produce exactly one row per orphan, and if the row cannot be written (database down) the reservation is kept for the next run (within a minute of the database coming back). The row is not marked `degraded` (it did not go through the spool) and the chain stays valid. Housekeeping never purges while the spool still holds lines waiting to be replayed: a call that finished during the outage keeps its reservation until its spooled row settles it, so it is never counted twice. Expired reservations no longer disappear silently on the next reservation of the same agent: they are ignored for the budget and purged only by housekeeping, which leaves the row.
+Interrupted calls: if the gateway process is killed while a call is in flight (restart, crash), the call leaves a budget reservation behind. When the reservation is older than the upstream timeout plus 30 s, housekeeping purges it and, in the same transaction, appends one ledger row for that call: verdict `allowed`, reason `interrupted_no_response`, the agent, the model and request hash that the reservation recorded (null for a reservation created before they were stored), 0 tokens, and **a cost equal to the reserved estimate**. The same amount is added to the agent's daily spend, exactly as for `client_aborted_estimated` (a conservative configured estimate, not a proven upper bound on the unknown provider charge). The row means "this call was started and never answered: its outcome is unknown"; it is never written for a live in-flight call or one already settled. The reservation id is the idempotency key, so repeated or concurrent housekeeping attempts produce exactly one row per orphan, and if the row cannot be written (database down) the reservation is kept for the next run (within a minute of the database coming back). The row is not marked `degraded` (it did not go through the spool) and the chain stays valid. Housekeeping never purges while the spool still holds lines waiting to be replayed: a call that finished during the outage keeps its reservation until its spooled row settles it, so it is never counted twice. Expired reservations no longer disappear silently on the next reservation of the same agent: they are ignored for the budget and purged only by housekeeping, which leaves the row.
 
 Unverifiable agent during an outage: in fail-open, a key unknown to the agent cache, or whose entry is older than `GARDAGENT_AGENT_CACHE_TTL_MS` plus the grace window, cannot be verified (the gateway must not answer 401 for a key it cannot check). It gets 503 with the code `agent_unverifiable_during_outage` and a message saying that the agent could not be verified while the database is unreachable and to retry later; the genuine ledger refusals keep `ledger_unavailable`. The code appears in `error.code` on `/v1/chat/completions` (OpenAI format), in `error.code` of the Anthropic-format body on `/v1/messages` (`type: api_error`), and in `error.data.code` of the JSON-RPC error on `/mcp/:server`. Limit: **refusals during an outage leave no trace**: this refusal, like any refusal that needs the database, writes no ledger row (the ledger is down and the spool only records calls that were served), so the ledger shows nothing for those requests.
 
@@ -78,9 +78,13 @@ Agent cache and `GARDAGENT_AGENT_CACHE_TTL_MS`: the memory cache of agents used 
 
 `GET /health` keeps `status`, `mode`, `database` and `spoolBacklog`, and adds `ledger: { status: "ok" | "degraded" | "down", dbOutagePolicy, spool: { backlog, bytes, maxBytes, writable } }`. In fail-open with a writable spool, `/health` answers 200 with `status: "degraded"` (the gateway is serving); otherwise a database outage still gives 503.
 
+## Per-agent limits
+
+Optional `requestsPerMinute` and `maxConcurrentRequests` policy fields govern shared admissions across both model endpoints and MCP. Model and MCP notification refusals return HTTP 429; MCP requests currently return HTTP 200 with JSON-RPC `-32004`. All carry `Retry-After`, cost zero and create no budget reservation. Counters reset on restart and observe mode records rather than blocks violations. See [rate-limits.md](rate-limits.md).
+
 ## Human approval
 
-An agent can have MCP tools "requiring approval" (`approvalTools`, same format and wildcards as `allowedTools`, empty by default). An allowed `tools/call` that matches is not forwarded: the gateway creates a request (`approvals` table) and keeps the agent's HTTP request open until a decision or `GARDAGENT_APPROVAL_TIMEOUT_MS` (default 120000). If approved, the call is relayed normally; if rejected or expired, the agent gets JSON-RPC error `-32002` and the MCP server is never called. Waiting is woken in memory and, as a fallback, by polling the store every 2 seconds, so a decision taken on another instance is picked up.
+An agent can have MCP tools "requiring approval" (`approvalTools`, same format and wildcards as `allowedTools`, empty by default). An allowed `tools/call` that matches is not forwarded: the gateway creates a request (`approvals` table) and keeps the agent's HTTP request open until a decision or `GARDAGENT_APPROVAL_TIMEOUT_MS` (default 120000). If approved, the call is relayed normally; if rejected or expired, the agent gets JSON-RPC error `-32002` and the MCP server is never called. Waiting is woken in memory and, as a fallback, by polling the store every 2 seconds, so a persisted decision can be picked up even if the in-memory wakeup is missed. Multi-instance deployment is unsupported.
 
 Admin routes: `GET /admin/approvals?status=pending`, `POST /admin/approvals/:id/approve`, `POST /admin/approvals/:id/reject` (optional `{"reason": "..."}`); both return 409 if the request was already decided. The ledger records the request (`mcp.approval.requested`), the decision (`mcp.approval.decided`, reason `approved`, `rejected` or `expired`) and then the call, with the arguments hash only. A readable argument summary (500 characters max) is kept in the `approvals` table, never in the ledger.
 
@@ -97,9 +101,12 @@ Admin routes: `GET /admin/approvals?status=pending`, `POST /admin/approvals/:id/
 | `GET /admin/ledger/export.csv?from=YYYY-MM-DD&to=YYYY-MM-DD` | Export the ledger to CSV (optional inclusive bounds, UTC days). Accepts the same filters as `GET /admin/ledger` (below) |
 | `GET /admin/ledger?afterSeq=0&limit=100` | Read the ledger. Parameters: `afterSeq` and `beforeSeq` (exclusive bounds), `limit` (1000 max), `order=asc\|desc` (ascending by default; `order=desc&limit=100` returns the last 100 rows). Optional filters, combinable with each other, with the dates and with paging (AND): `agent` (agent id), `model` (exact model name), `verdict` (`allowed` or `denied`), `minCost` and `maxCost` (USD, inclusive, for example `0.25`), `from` and `to` (inclusive UTC days, `YYYY-MM-DD`). An invalid value (unknown verdict, negative or non-numeric cost, `minCost` above `maxCost`, a parameter given twice) is a 400; an empty parameter means no filter |
 | `GET /admin/ledger/facets` | Agents (`id`, `name`) and models present in the ledger, to populate filter selectors |
+| `GET /admin/ledger/export.ndjson` | Export sequence pages bounded by a captured head (see below) |
+| `GET /admin/ledger/checkpoint` | Capture a checkpoint for external storage (see below) |
+| `POST /admin/ledger/verify` | Verify the chain against an expected checkpoint supplied as the JSON body (see below) |
 | `GET /admin/ledger/verify` | Verify the full integrity of the ledger (always the whole chain: filters are ignored) |
 
-All `/admin` routes require `Authorization: Bearer <GARDAGENT_ADMIN_TOKEN>`.
+All `/admin` routes require a bearer operator token (named or bootstrap). Only bootstrap can create/revoke operators; see [mandate.md](mandate.md) for operator and policy-revision endpoints and credential limits.
 
 **Admin actions are logged.** Creating an agent (`admin.agent.create`) and every update (`admin.agent.update`, with the list of changed fields in the reason, e.g. `active,dailyBudget`) add a row to the chain, with the affected agent, zero tokens and zero cost, and the fingerprint of the changed content. A patch that changes nothing writes nothing. These rows are excluded from statistics.
 
@@ -117,7 +124,7 @@ Spend check: the Agents page reads the `agent_spend` counter while the dashboard
 The gateway serves an admin console (Vue 3) at **`/console/`**: with Docker, open http://localhost:8080/console/.
 `GET /` redirects to `/console/`.
 
-- **Login**: enter the value of `GARDAGENT_ADMIN_TOKEN`. The token stays in the tab's `sessionStorage`; “Log out” clears it.
+- **Login**: enter a named operator token or the bootstrap `GARDAGENT_ADMIN_TOKEN`. The token stays in the tab's `sessionStorage`; “Log out” clears it.
 - **Dashboard** (first tab): total spend, requests and refusals over 7 or 30 days, bar chart of daily spend stacked by agent (values on hover or touch, equivalent table below), refusals by reason. When the spend counter and the ledger disagree for today (UTC), a discreet banner (“Écart entre la dépense et le journal pour N agent(s) aujourd'hui”) lists the agents with both amounts; nothing is shown otherwise.
 - **Ledger**: most recent actions at the top, refreshed every 10 seconds, 100 rows per page (“Load older”). Admin actions appear with a clear label (“Agent created”, “Agent updated: active, budget”). Filters by Agent, Model, Verdict (“All”, “Allowed”, “Denied”) and cost (min. / max., in USD) narrow the list; they are kept in the page URL (`?tab=ledger&verdict=denied&…`) so a filtered view can be shared or reloaded, and “Reset” clears them. The “Export to CSV” button downloads the ledger over a custom range (30 days by default) with the active filters applied.
 - **Agents**: list with today's spend against budget (red bar beyond 80%), active/inactive toggle with confirmation before deactivation, editing of allowed models and budget, agent creation, and a “Renouveler la clé” action per agent (with a confirmation step). A key is shown only once, right after creation or rotation.
@@ -128,6 +135,8 @@ The console is served only if the built folder exists (variable `GARDAGENT_CONSO
 ### Console language
 
 The console is available in French and English. The `FR | EN` switch in the header (and on the login screen) changes the language at once and the choice is kept in the browser (`localStorage`, key `gardagent.console.locale`). Without a saved choice, the browser language decides: French if it starts with `fr` or is missing, English otherwise. Texts come from `apps/console/src/i18n/fr.ts` and `en.ts`, which must have the same keys (checked by `vue-tsc` and by a test); data returned by the gateway (agent names, models, ledger values) is never translated. To add a string, add the key to `fr.ts` first, then to `en.ts`.
+
+The Chromium browser suite covers login and wrong-token refusal, agent listing and creation, approval and rejection, ledger filters, integrity verification results, and French/English switching against the built console served by a real gateway with an in-memory store. Run it with `pnpm test:e2e`; see [browser test coverage](../e2e/README.md) for setup and limits.
 
 Development, with a gateway running on port 8080 (Vite proxies `/admin` to it):
 
@@ -140,5 +149,50 @@ pnpm --filter @gardagent/console build   # produces apps/console/dist
 
 ## Budget reservation and pass-through notes
 
-- The budget is reserved atomically before each call and settled after it: an estimated cost (request size / 4 for input, plus `max_tokens`, `max_completion_tokens` or `GARDAGENT_DEFAULT_MAX_OUTPUT_TOKENS`, 1024 by default, for output) is held while the request is in flight, so concurrent or streaming requests cannot exceed the cap. The reservation is replaced by the real cost at the end (or released on error, abort or timeout) and expires on its own if the gateway crashes. `GET /admin/agents` exposes `reservedTodayUsd`. A budget of 0 means unlimited: agent creation requires an explicit positive `dailyBudgetUsd`, or `"dailyBudgetUsd": 0` together with `"unlimited": true` (a missing budget is a 400). `PATCH` still accepts 0; agents created before v0.3.0 keep whatever budget they have. The smallest positive budget is 0.000001 USD (1 micro-USD): a positive `dailyBudgetUsd` that would round to 0 (for example `0.0000001`) is refused with 400, on creation and on `PATCH`, so that a tiny budget can never turn into "no cap".
+- The budget is reserved atomically before each call and settled after it: an estimated cost (request size / 4 for input, plus `max_tokens`, `max_completion_tokens` or `GARDAGENT_DEFAULT_MAX_OUTPUT_TOKENS`, 1024 by default, for output) is held while the request is in flight, so concurrent admissions account for outstanding estimates as well as settled spend. Actual usage can exceed an estimate; this is not a provider-charge ceiling. The reservation is replaced by the real cost at the end (or released when the upstream was unreachable). Aborts without usage are charged conservatively at the estimate; after a crash, housekeeping journals and settles expired reservations as `interrupted_no_response`. `GET /admin/agents` exposes `reservedTodayUsd`. A budget of 0 means unlimited: agent creation requires an explicit positive `dailyBudgetUsd`, or `"dailyBudgetUsd": 0` together with `"unlimited": true` (a missing budget is a 400). `PATCH` still accepts 0; agents created before v0.3.0 keep whatever budget they have. The smallest positive budget is 0.000001 USD (1 micro-USD): a positive `dailyBudgetUsd` that would round to 0 (for example `0.0000001`) is refused with 400, on creation and on `PATCH`, so that a tiny budget can never turn into "no cap".
 - On `/v1/messages`, the request body is forwarded as-is: provider-specific parameters are neither filtered nor validated. Cache tokens are counted at the price of ordinary input tokens.
+
+### Ledger export and external checkpoints
+
+All three endpoints require admin authentication. They preserve historical entry
+fields and hashes; the checkpoint envelope version is independent of ledger entry
+format versions.
+
+- `GET /admin/ledger/checkpoint` returns
+  `{ "format": "gardagent-checkpoint-v1", "sequence": 42, "head_hash": "<64 lowercase hex characters>", "created_at": "<ISO timestamp>" }`.
+  The sequence and hash come from one committed head read. An empty ledger has
+  sequence 0 and the genesis hash (64 zeroes). The timestamp records when the
+  envelope was produced; it is not a signed timestamp.
+- `GET /admin/ledger/export.ndjson` returns `application/x-ndjson`, with a metadata
+  line followed by unmodified ledger entries in ascending sequence order. The first
+  line is `{ "type": "metadata", "checkpoint": { ... }, "nextAfterSeq": 1000 }`.
+  `limit` is an integer from 1 to 1000 (default 1000). `afterSeq` is exclusive and
+  defaults to 0. The first page captures the committed head. To continue, supply
+  `afterSeq=nextAfterSeq`, `headSequence=checkpoint.sequence` and
+  `headHash=checkpoint.head_hash` from the first page; keep those same head values
+  for every page. No entry beyond that head is returned even while writes continue.
+  `nextAfterSeq: null` means complete, including an empty ledger or a cursor at the
+  head. Each nonempty response ends with a newline. A continuation requires both
+  head parameters; malformed bounds return 400 and a missing or changed anchor
+  returns 409. No ledger filters apply. Keep the first page's checkpoint as the
+  export anchor; later pages regenerate the envelope timestamp. The existing CSV
+  endpoint is a separate display export and does not provide this protocol.
+- `POST /admin/ledger/verify` accepts the complete checkpoint object directly as
+  its JSON body. It verifies the current chain up to a head captured at request
+  start and adds `checkpointContained` to the existing verification response.
+  For example, `{ "valid": true, "checked": 45, "lastHash": "...",
+  "checkpointContained": true }` means that the valid captured chain contains the
+  expected sequence and hash. `valid: true, checkpointContained: false` means the
+  chain is internally valid but does not contain the expected anchor (including
+  truncation below it or replacement with a different valid chain). On an invalid
+  chain, membership is reported as false because it could not be established in a
+  valid full chain. Malformed or unsupported checkpoints return 400. The original
+  `GET /admin/ledger/verify` remains available without an expected checkpoint.
+
+Keep checkpoints **outside the database**, for example in a file on independent
+storage or printed. Internal hash verification alone cannot detect tail truncation
+or a complete valid rewrite. An externally retained checkpoint makes these changes
+detectable relative to its sequence and hash. It does not protect later entries
+that were never anchored, and it proves neither authorship nor a human identity.
+Export consistency assumes append-only writes; privileged concurrent changes to
+existing rows are outside the export consistency guarantee.

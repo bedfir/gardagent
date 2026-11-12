@@ -6,7 +6,7 @@ import { budgetDay, MemoryStore, type Store } from "@gardagent/core";
 import { buildApp } from "../src/app.js";
 import { PgStore } from "../src/pg-store.js";
 import { RESERVATION_MARGIN_MS } from "../src/shared.js";
-import { adminHeaders, config as baseConfig, jsonResponse, type FetchCall } from "./helpers.js";
+import { adminHeaders, config as baseConfig, jsonResponse, waitUntil, type FetchCall } from "./helpers.js";
 
 const TTL = baseConfig.upstreamTimeoutMs + RESERVATION_MARGIN_MS;
 // 1 micro-dollar per output token, free input: a request with max_tokens 100 reserves exactly 100.
@@ -26,11 +26,7 @@ function gate() {
 }
 
 async function until(check: () => boolean | Promise<boolean>): Promise<void> {
-  for (let i = 0; i < 500; i++) {
-    if (await check()) return;
-    await new Promise((r) => setTimeout(r, 5));
-  }
-  throw new Error("until: condition never met");
+  await waitUntil(check, Boolean);
 }
 
 let pgPool: pg.Pool | undefined;
