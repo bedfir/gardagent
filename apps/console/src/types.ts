@@ -43,6 +43,9 @@ export interface Stats {
 }
 
 export interface LedgerEntry {
+  policyRev?: string;
+  operatorId?: string;
+  approvalRef?: string;
   seq: number;
   ts: string;
   agentId: string | null;
@@ -81,6 +84,8 @@ export interface CreatedAgent {
 }
 
 export interface Approval {
+  policyRev?: string;
+  operatorId?: string;
   id: string;
   createdAt: string;
   agentId: string;

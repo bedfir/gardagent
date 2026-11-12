@@ -1,10 +1,50 @@
+import { policyRevision } from "./policy-revision.js";
+import { safeEqual } from "./keys.js";
+import type { Operator } from "./types.js";
 import { randomUUID } from "node:crypto";
 import { chainEntry, GENESIS_HASH } from "./ledger.js";
 import { INTERRUPTED_FALLBACK_ACTION, INTERRUPTED_REASON, KeyHashCollisionError } from "./types.js";
 import type { Agent, AgentPatch, AppendLedgerOptions, Approval, ApprovalStatus, LedgerAggregate, LedgerEntry, LedgerFacets, LedgerInput, LedgerQuery, MicroUsd, ReservationMeta, SpendDivergence, Store } from "./types.js";
 
+function copyAgent(agent: Agent): Agent {
+  return { ...agent, allowedModels: [...agent.allowedModels], allowedTools: [...agent.allowedTools], approvalTools: [...agent.approvalTools] };
+}
+
 /** In-memory storage, for tests and demos without a database. */
 export class MemoryStore implements Store {
+  private operators = new Map<string, { operator: Operator; tokenHash: string }>();
+  private policies = new Map<string, string>();
+
+  async createOperator(operator: Operator, tokenHash: string, audit: LedgerInput): Promise<void> {
+    await this.enqueue(async () => {
+      if (this.operators.has(operator.id)) throw new Error("Operator already exists");
+      await this.appendNow(audit, {});
+      this.operators.set(operator.id, { operator: { ...operator }, tokenHash });
+    });
+  }
+  async listOperators(): Promise<Operator[]> {
+    return [...this.operators.values()].map(({ operator }) => ({ ...operator }));
+  }
+  async findOperator(tokenHash: string): Promise<Operator | null> {
+    for (const item of this.operators.values()) {
+      if (safeEqual(item.tokenHash, tokenHash) && !item.operator.revokedAt) return { ...item.operator };
+    }
+    return null;
+  }
+  async revokeOperator(id: string, at: string, audit: LedgerInput): Promise<boolean> {
+    return this.enqueue(async () => {
+      const item = this.operators.get(id);
+      if (!item || item.operator.revokedAt) return false;
+      await this.appendNow(audit, {});
+      item.operator.revokedAt = at;
+      return true;
+    });
+  }
+  async getPolicyRevision(id: string): Promise<string | null> { return this.policies.get(id) ?? null; }
+  private rememberPolicy(agent: Agent): void {
+    const revision = policyRevision(agent);
+    this.policies.set(revision.id, revision.canonical);
+  }
   private agents = new Map<string, Agent>();
   private spend = new Map<string, MicroUsd>();
   private reservations = new Map<string, { agentId: string; day: string; amount: MicroUsd; at: number; meta?: ReservationMeta }>();
@@ -16,59 +56,57 @@ export class MemoryStore implements Store {
 
   async findAgentByKeyHash(keyHash: string): Promise<Agent | null> {
     for (const agent of this.agents.values()) {
-      if (agent.keyHash === keyHash) return { ...agent };
+      if (agent.keyHash === keyHash) return copyAgent(agent);
     }
     return null;
   }
 
-  async createAgent(agent: Agent): Promise<void> {
-    if (this.agents.has(agent.id)) throw new Error(`Agent ${agent.id} already exists`);
-    this.agents.set(agent.id, { ...agent });
+  async createAgent(agent: Agent, audit?: LedgerInput): Promise<void> {
+    const next = copyAgent(agent);
+    return this.enqueue(async () => {
+      if (this.agents.has(next.id)) throw new Error("Agent already exists");
+      if (audit) await this.appendNow({ ...audit, policyRev: policyRevision(next).id }, {});
+      this.rememberPolicy(next);
+      this.agents.set(next.id, next);
+    });
   }
 
   async getAgent(id: string): Promise<Agent | null> {
     const agent = this.agents.get(id);
-    return agent ? { ...agent } : null;
+    return agent ? copyAgent(agent) : null;
   }
 
-  async updateAgent(id: string, patch: AgentPatch): Promise<Agent | null> {
-    const agent = this.agents.get(id);
-    if (!agent) return null;
-    if (patch.name !== undefined) agent.name = patch.name;
-    if (patch.allowedModels !== undefined) agent.allowedModels = [...patch.allowedModels];
-    if (patch.allowedTools !== undefined) agent.allowedTools = [...patch.allowedTools];
-    if (patch.approvalTools !== undefined) agent.approvalTools = [...patch.approvalTools];
-    if (patch.dailyBudget !== undefined) agent.dailyBudget = patch.dailyBudget;
-    if (patch.active !== undefined) agent.active = patch.active;
-    return { ...agent };
-  }
-
-  async rotateAgentKey(id: string, keyHash: string, audit?: LedgerInput): Promise<Agent | null> {
-    const agent = this.agents.get(id);
-    if (!agent) return null;
-    for (const other of this.agents.values()) {
-      if (other.id !== id && other.keyHash === keyHash) throw new KeyHashCollisionError();
-    }
-    if (!audit) {
-      agent.keyHash = keyHash;
-      return { ...agent };
-    }
-    // Same all-or-nothing contract as PgStore: inside the ledger queue, undo the change if the audit row fails.
+  async updateAgent(id: string, patch: AgentPatch, audit?: LedgerInput): Promise<Agent | null> {
     return this.enqueue(async () => {
-      const previous = agent.keyHash;
-      agent.keyHash = keyHash;
-      try {
-        await this.appendNow(audit, {});
-      } catch (e) {
-        agent.keyHash = previous;
-        throw e;
-      }
-      return { ...agent };
+      const current = this.agents.get(id);
+      if (!current) return null;
+      const next = copyAgent({ ...current, ...patch });
+      if (audit) await this.appendNow({ ...audit, policyRev: policyRevision(next).id }, {});
+      this.rememberPolicy(next);
+      this.agents.set(id, next);
+      return copyAgent(next);
     });
   }
 
-  async createApproval(approval: Approval): Promise<void> {
-    this.approvals.set(approval.id, { ...approval });
+  async rotateAgentKey(id: string, keyHash: string, audit?: LedgerInput): Promise<Agent | null> {
+    return this.enqueue(async () => {
+      const agent = this.agents.get(id);
+      if (!agent) return null;
+      for (const other of this.agents.values()) {
+        if (other.id !== id && other.keyHash === keyHash) throw new KeyHashCollisionError();
+      }
+      if (audit) await this.appendNow(audit, {});
+      agent.keyHash = keyHash;
+      return copyAgent(agent);
+    });
+  }
+
+  async createApproval(approval: Approval, audit?: LedgerInput): Promise<void> {
+    return this.enqueue(async () => {
+      if (this.approvals.has(approval.id)) throw new Error("Approval already exists");
+      if (audit) await this.appendNow(audit, {});
+      this.approvals.set(approval.id, { ...approval });
+    });
   }
 
   async getApproval(id: string): Promise<Approval | null> {
@@ -76,11 +114,14 @@ export class MemoryStore implements Store {
     return a ? { ...a } : null;
   }
 
-  async decideApproval(id: string, status: Exclude<ApprovalStatus, "pending">, reason: string | null, decidedAt: string): Promise<Approval | null> {
-    const a = this.approvals.get(id);
-    if (!a || a.status !== "pending") return null;
-    Object.assign(a, { status, reason, decidedAt });
-    return { ...a };
+  async decideApproval(id: string, status: Exclude<ApprovalStatus, "pending">, reason: string | null, decidedAt: string, operatorId?: string, audit?: LedgerInput): Promise<Approval | null> {
+    return this.enqueue(async () => {
+      const a = this.approvals.get(id);
+      if (!a || a.status !== "pending") return null;
+      if (audit) await this.appendNow(audit, {});
+      Object.assign(a, { status, reason, decidedAt, ...(operatorId ? { operatorId } : {}) });
+      return { ...a };
+    });
   }
 
   async listApprovals(options: { status?: ApprovalStatus; limit?: number } = {}): Promise<Approval[]> {
@@ -89,7 +130,7 @@ export class MemoryStore implements Store {
   }
 
   async listAgents(): Promise<Agent[]> {
-    return [...this.agents.values()].map((a) => ({ ...a }));
+    return [...this.agents.values()].map(copyAgent);
   }
 
   async getSpent(agentId: string, day: string): Promise<MicroUsd> {
@@ -142,6 +183,7 @@ export class MemoryStore implements Store {
           {
             ts: new Date().toISOString(),
             agentId: r.agentId,
+            ...(r.meta?.policyRev ? { policyRev: r.meta.policyRev } : {}),
             action: r.meta?.action ?? INTERRUPTED_FALLBACK_ACTION,
             model: r.meta?.model ?? null,
             verdict: "allowed",

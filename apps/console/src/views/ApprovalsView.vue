@@ -90,6 +90,8 @@ onUnmounted(() => clearInterval(timer));
           <tr>
             <th scope="col">{{ t("col.agent") }}</th>
             <th scope="col">{{ t("col.tool") }}</th>
+            <th scope="col">{{ t("col.operator") }}</th>
+            <th scope="col">{{ t("col.policyRev") }}</th>
             <th scope="col">{{ t("col.args") }}</th>
             <th scope="col">{{ t("col.age") }}</th>
             <th scope="col">{{ t("col.decision") }}</th>
@@ -99,6 +101,8 @@ onUnmounted(() => clearInterval(timer));
           <tr v-for="a in pending" :key="a.id">
             <td :data-label="t('col.agent')">{{ agentName(a.agentId) }}</td>
             <td :data-label="t('col.tool')" class="mono">{{ a.server }}/{{ a.tool }} <span class="badge" :class="a.accessClass === 'write' ? 'badge-ko' : 'badge-ok'">{{ accessLabel(a) }}</span></td>
+            <td :data-label="t('col.operator')" class="mono small">{{ a.operatorId ?? "—" }}</td>
+            <td :data-label="t('col.policyRev')" class="mono small" style="overflow-wrap: anywhere">{{ a.policyRev ?? "—" }}</td>
             <td :data-label="t('col.args')" class="mono small">{{ a.argsSummary || t("common.noneArgs") }}</td>
             <td :data-label="t('col.age')" class="mono">{{ ageLabel(a.createdAt, now) }}</td>
             <td :data-label="t('col.decision')" class="actions">
@@ -128,6 +132,8 @@ onUnmounted(() => clearInterval(timer));
             <th scope="col">{{ t("col.decidedAt") }}</th>
             <th scope="col">{{ t("col.agent") }}</th>
             <th scope="col">{{ t("col.tool") }}</th>
+            <th scope="col">{{ t("col.operator") }}</th>
+            <th scope="col">{{ t("col.policyRev") }}</th>
             <th scope="col">{{ t("col.args") }}</th>
             <th scope="col">{{ t("col.result") }}</th>
           </tr>
@@ -137,6 +143,8 @@ onUnmounted(() => clearInterval(timer));
             <td :data-label="t('col.decidedAt')" class="mono small">{{ a.decidedAt ? localTime(a.decidedAt) : "" }}</td>
             <td :data-label="t('col.agent')">{{ agentName(a.agentId) }}</td>
             <td :data-label="t('col.tool')" class="mono">{{ a.server }}/{{ a.tool }} <span class="badge" :class="a.accessClass === 'write' ? 'badge-ko' : 'badge-ok'">{{ accessLabel(a) }}</span></td>
+            <td :data-label="t('col.operator')" class="mono small">{{ a.operatorId ?? "—" }}</td>
+            <td :data-label="t('col.policyRev')" class="mono small" style="overflow-wrap: anywhere">{{ a.policyRev ?? "—" }}</td>
             <td :data-label="t('col.args')" class="mono small">{{ a.argsSummary || t("common.noneArgs") }}</td>
             <td :data-label="t('col.result')">
               {{ statusLabel(a) }}<template v-if="a.reason && a.status === 'rejected'"> : {{ a.reason }}</template>

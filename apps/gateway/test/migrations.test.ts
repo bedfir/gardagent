@@ -32,7 +32,7 @@ async function snapshot(pool: pg.Pool) {
 describe.skipIf(!url)("versioned PostgreSQL migrations", () => {
   it("installs fresh and serializes overlapping callers", async () => fixture(async (pool, store) => {
     await Promise.all([store.migrate(), store.migrate()]);
-    expect((await pool.query("SELECT version FROM schema_migrations ORDER BY version")).rows).toEqual([{ version: 1 }, { version: 2 }]);
+    expect((await pool.query("SELECT version FROM schema_migrations ORDER BY version")).rows).toEqual(MIGRATIONS.map(({ version }) => ({ version })));
     expect((await pool.query("SELECT count(*) FROM ledger")).rows[0].count).toBe("0");
     await expect(pool.query("DELETE FROM ledger")).resolves.toBeDefined();
     expect((await pool.query("SELECT 1 FROM pg_trigger WHERE tgrelid = 'ledger'::regclass AND tgname = 'ledger_no_update'")).rowCount).toBe(1);
@@ -40,7 +40,7 @@ describe.skipIf(!url)("versioned PostgreSQL migrations", () => {
 
   it("adopts populated 0.3.0 without changing rows, relation identities or trigger", async () => fixture(async (pool, store) => {
     await pool.query(legacy);
-    await store.createAgent({ id: "old", name: "old", keyHash: "fake-key", allowedModels: ["*"], allowedTools: [], approvalTools: [], dailyBudget: 1000, active: true });
+    await pool.query("INSERT INTO agents (id,name,key_hash,allowed_models,daily_budget) VALUES ('old','old','fake-key',ARRAY['*'],1000)");
     await store.addSpend("old", "2026-11-12", 123);
     const golden = JSON.parse(readFileSync(new URL("../../../test/fixtures/contracts/ledger-v1.json", import.meta.url), "utf8")) as { entries: LedgerEntry[] };
     const old = golden.entries[0]!;
@@ -53,11 +53,15 @@ describe.skipIf(!url)("versioned PostgreSQL migrations", () => {
     const before = await snapshot(pool);
     const trigger = (await pool.query("SELECT oid FROM pg_trigger WHERE tgrelid = 'ledger'::regclass AND tgname = 'ledger_no_update'")).rows;
     await store.migrate();
-    expect((await snapshot(pool)).filter((row) => !row.relname.startsWith("schema_migrations"))).toEqual(before);
+    expect((await snapshot(pool)).filter((row) => before.some((original) => original.relname === row.relname))).toEqual(before);
     expect((await pool.query("SELECT oid FROM pg_trigger WHERE tgrelid = 'ledger'::regclass AND tgname = 'ledger_no_update'")).rows).toEqual(trigger);
     expect(await store.listLedger()).toEqual(ledger);
     expect(verifyChain(await store.listLedger()).valid).toBe(true);
     expect(await store.getSpent("old", "2026-11-12")).toBe(123);
+    const rev = (await pool.query("SELECT policy_rev FROM agents WHERE id = 'old'")).rows[0].policy_rev;
+    expect(await store.getPolicyRevision(rev)).toContain('"dailyBudget":1000');
+    await expect(pool.query("UPDATE policy_revisions SET canonical = 'changed' WHERE id = $1", [rev])).rejects.toThrow(/append-only/);
+    await expect(pool.query("DELETE FROM policy_revisions WHERE id = $1", [rev])).rejects.toThrow(/append-only/);
     const metadata = { policyRev: "a".repeat(64), operatorId: "test-operator", approvalRef: "test-reference" };
     const { seq: _seq, hash: _hash, prevHash: _prev, ...input } = old;
     const next = await store.appendLedger({ ...input, ...metadata });
@@ -86,22 +90,22 @@ describe.skipIf(!url)("versioned PostgreSQL migrations", () => {
 
   it("rolls back failing DDL and data while retaining the previous version", async () => fixture(async (pool, store) => {
     await store.migrate();
-    await expect(migrateDatabase(pool, [...MIGRATIONS, { version: 3, name: "deliberate failure", up: async (client) => {
+    await expect(migrateDatabase(pool, [...MIGRATIONS, { version: 4, name: "deliberate failure", up: async (client) => {
       await client.query("CREATE TABLE rollback_probe (id INTEGER)");
       await client.query("INSERT INTO spend_settlements (key) VALUES ('rollback-probe')");
       await client.query("SELECT deliberately_missing_function()");
-    } }])).rejects.toThrow(/migration 3.*failed/);
+    } }])).rejects.toThrow(/migration 4.*failed/);
     expect((await pool.query("SELECT to_regclass('rollback_probe') AS relation")).rows[0].relation).toBeNull();
     expect((await pool.query("SELECT * FROM spend_settlements")).rows).toEqual([]);
-    expect((await pool.query("SELECT version FROM schema_migrations ORDER BY version")).rows).toEqual([{ version: 1 }, { version: 2 }]);
+    expect((await pool.query("SELECT version FROM schema_migrations ORDER BY version")).rows).toEqual(MIGRATIONS.map(({ version }) => ({ version })));
     await store.migrate(); // failure released the advisory lock
   }));
 
   it("refuses a database newer than the executable", async () => fixture(async (pool, store) => {
     await store.migrate();
-    await pool.query("INSERT INTO schema_migrations (version, name) VALUES (3, 'future')");
-    await expect(store.migrate()).rejects.toThrow(/version 3 is newer than supported version 2/);
-    expect((await pool.query("SELECT count(*) FROM schema_migrations")).rows[0].count).toBe("3");
+    await pool.query("INSERT INTO schema_migrations (version, name) VALUES (4, 'future')");
+    await expect(store.migrate()).rejects.toThrow(/version 4 is newer than supported version 3/);
+    expect((await pool.query("SELECT count(*) FROM schema_migrations")).rows[0].count).toBe("4");
   }));
 
   it("refuses incomplete unversioned schemas without repairing them", async () => fixture(async (pool, store) => {

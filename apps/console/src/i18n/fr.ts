@@ -4,6 +4,8 @@
  * Placeholders use {name}; plural nouns are separate `unit.*` keys.
  */
 export const fr = {
+  "col.operator": "Opérateur",
+  "col.policyRev": "Révision de politique",
   "app.title": "Console Gardagent",
 
   "nav.label": "Sections",

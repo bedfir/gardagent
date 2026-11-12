@@ -1,3 +1,4 @@
+import { policyRevision, type Agent } from "@gardagent/core";
 import pg from "pg";
 
 /** Initial DDL only: never replayed for adoption or a versioned restart. */
@@ -234,6 +235,26 @@ export const MIGRATIONS: readonly Migration[] = [
       ADD COLUMN policy_rev TEXT,
       ADD COLUMN operator_id TEXT,
       ADD COLUMN approval_ref TEXT`);
+  } },
+  { version: 3, name: "Mandate attribution", up: async (client) => {
+    await client.query(`CREATE TABLE operators (
+      id TEXT PRIMARY KEY, label TEXT NOT NULL, token_hash TEXT NOT NULL UNIQUE,
+      created_at TEXT NOT NULL, revoked_at TEXT
+    );
+    CREATE TABLE policy_revisions (id TEXT PRIMARY KEY, canonical TEXT NOT NULL);
+    CREATE TRIGGER policy_revisions_no_update BEFORE UPDATE OR DELETE ON policy_revisions
+      FOR EACH ROW EXECUTE FUNCTION ledger_append_only();
+    ALTER TABLE agents ADD COLUMN policy_rev TEXT REFERENCES policy_revisions(id);
+    ALTER TABLE approvals ADD COLUMN policy_rev TEXT REFERENCES policy_revisions(id), ADD COLUMN operator_id TEXT;
+    ALTER TABLE agent_reservations ADD COLUMN policy_rev TEXT;`);
+    const { rows } = await client.query("SELECT * FROM agents");
+    for (const row of rows) {
+      const revision = policyRevision({ allowedModels: row.allowed_models, allowedTools: row.allowed_tools,
+        approvalTools: row.approval_tools, dailyBudget: Number(row.daily_budget), active: row.active } as Agent);
+      await client.query("INSERT INTO policy_revisions (id, canonical) VALUES ($1,$2) ON CONFLICT DO NOTHING", [revision.id, revision.canonical]);
+      await client.query("UPDATE agents SET policy_rev = $2 WHERE id = $1", [row.id, revision.id]);
+    }
+    await client.query("ALTER TABLE agents ALTER COLUMN policy_rev SET NOT NULL");
   } },
 ];
 

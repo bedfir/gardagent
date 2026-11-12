@@ -53,8 +53,16 @@ export class ApprovalHub {
       const expire = async () => {
         if (settled) return;
         try {
-          const a =
-            (await this.store.decideApproval(id, "expired", null, new Date().toISOString())) ?? (await this.store.getApproval(id));
+          const existing = await this.store.getApproval(id);
+          const decidedAt = new Date().toISOString();
+          const audit = existing ? {
+            ts: decidedAt, agentId: existing.agentId, action: DECIDED,
+            model: `${existing.server}/${existing.tool}#${existing.accessClass}`,
+            verdict: "denied" as const, reason: "expired", upstreamStatus: null,
+            promptTokens: 0, completionTokens: 0, cost: 0, requestHash: existing.argsHash, responseHash: null,
+            approvalRef: id, ...(existing.policyRev ? { policyRev: existing.policyRev } : {}),
+          } : undefined;
+          const a = (await this.store.decideApproval(id, "expired", null, decidedAt, undefined, audit)) ?? (await this.store.getApproval(id));
           if (a) finish(a);
           else if (!settled) {
             cleanup();

@@ -5,3 +5,4 @@ export * from "./keys.js";
 export * from "./pricing.js";
 export * from "./policy.js";
 export * from "./memory-store.js";
+export * from "./policy-revision.js";
