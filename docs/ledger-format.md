@@ -123,7 +123,7 @@ or a default.
 | --- | --- | --- | --- |
 | `formatVersion` | integer `2` | Every entry written by a version 2 writer | Format version marker. |
 | `policyRev` | string, 64 lowercase hex | Rows that result from an admission decision against an agent's policy (allowed or denied), and `admin.agent.*` rows | Identifier of the immutable policy revision in force (the SHA-256 of its canonical form; see mandate.md). |
-| `operatorId` | string | `admin.*` rows and `mcp.approval.decided` rows | Id of the operator whose token authenticated the action. The bootstrap operator has the id `bootstrap`. Never the token. |
+| `operatorId` | string | `admin.*` rows and `mcp.approval.decided` rows written for a human decision | Id of the operator whose token authenticated the action. The bootstrap operator has the id `bootstrap`. Never the token. Absent on system-written rows (see 2.3). |
 | `approvalRef` | string | `mcp.approval.requested`, `mcp.approval.decided`, and the `mcp.tools/call` row that the approval authorized | Id of the approval request, so that the three rows can be matched. |
 
 Names are camelCase like the existing fields. The matching database columns (snake_case: `format_version`, `policy_rev`,
@@ -161,7 +161,14 @@ For entries of format version 2 (these are checks on content, in addition to the
 - An `mcp.tools/call` row carrying `approvalRef` is matched by an earlier `mcp.approval.decided` row with the same
   `approvalRef`, `verdict: "allowed"`, the same `agentId` and the same `requestHash`. The `requestHash` equality is
   the binding between the human decision and the arguments that were then executed.
-- An `mcp.approval.decided` row carries an `operatorId`.
+- An `mcp.approval.decided` row is one of two kinds, told apart by `reason`:
+  - **Human decision** (`reason` is not `expired`): it MUST carry an `operatorId`.
+  - **Automatic expiry** (`reason: "expired"`, `verdict: "denied"`): written by the gateway when the approval timed out
+    or the waiting request was cancelled. No operator authenticated it, so it MUST NOT carry an `operatorId`, and the
+    verifier reports one as invalid. It carries `approvalRef`, `requestHash` and `policyRev` like any decision. The
+    absence of an operator is the statement "no human decided"; it is never attributed to the bootstrap operator.
+  - An `mcp.tools/call` row never matches an expiry row as its authorizing decision (the match above requires
+    `verdict: "allowed"`).
 
 ### 2.4 Compatibility impact
 

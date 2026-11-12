@@ -77,6 +77,8 @@ rows). Version 2 adds the correlation between the rows:
 2. An operator decides. The gateway writes `mcp.approval.decided` with the same `approvalRef`, the same `requestHash`,
    `verdict` `allowed`/`denied`, and the **`operatorId` of the authenticated operator**. A decision already taken
    answers 409 and writes nothing, as in 0.3.0.
+   If nobody decides, the gateway itself writes `mcp.approval.decided` with `verdict` `denied`, `reason` `expired`, the
+   same `approvalRef` and `requestHash`, and **no `operatorId`**: no operator authenticated it, so none is named.
 3. If approved, the call is forwarded and its `mcp.tools/call` row carries the same `approvalRef`.
 
 So the chain of proof for one action is three rows sharing an `approvalRef`, the same `requestHash` and the same

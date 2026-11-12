@@ -15,7 +15,7 @@ limitations.
 | [ledger-format.md](ledger-format.md) | The ledger format: version 1 as written by 0.3.0 (fields, canonical JSON, hash input, chain rule) and the version 2 specification. |
 | [mandate.md](mandate.md) | The v1 mandate model: operators, policy revisions, approvals correlated to the entries they authorize, and what a token does not prove. |
 | [mcp-matrix.md](mcp-matrix.md) | Target governance of every MCP method, notification and transport the proxy can see. |
-| [../deploy/README.md](../deploy/README.md)(../deploy/README.md) | The deployment kit: Docker Compose stack, Caddy TLS edge, install, backup, restore and rotation scripts. |
+| [../deploy/README.md](../deploy/README.md) | The deployment kit: Docker Compose stack, Caddy TLS edge, install, backup, restore and rotation scripts. |
 
 ## Technical archives (validation reports)
 
