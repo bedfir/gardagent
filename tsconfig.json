@@ -3,6 +3,7 @@
   "references": [
     { "path": "packages/core" },
     { "path": "packages/report" },
+    { "path": "packages/verify" },
     { "path": "apps/gateway" }
   ]
 }

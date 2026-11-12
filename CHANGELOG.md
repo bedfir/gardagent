@@ -14,6 +14,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- Standalone offline ledger verifier with independent hashing, complete M06 export validation, external checkpoint comparisons, and text or JSON output.
+
 - Sequence-paginated NDJSON ledger export with a captured head, external checkpoints, and checkpoint-aware verification; detection of truncation or replacement requires retaining a checkpoint outside the database.
 
 - Named, revocable operator tokens (shown once), immutable policy revisions captured at admission, operator-attributed administration and approval decisions, correlated approval ledger rows, and bilingual mandate metadata in the console. Migration 3 preserves historical ledger hashes and spend.
