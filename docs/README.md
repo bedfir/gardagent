@@ -10,11 +10,16 @@ limitations.
 | [self-hosting.md](self-hosting.md) | Running Gardagent on your own Linux host: install, TLS, administration allow-list, authentication-failure limits, agents, routine checks, backups and removal. |
 | [reference.md](reference.md) | Detailed behavior: provider headers, MCP governance and read/write tools, `observe` and `enforce` modes, database outage handling, human approval, the admin API, the console. |
 | [industrial-setup.md](industrial-setup.md) | Declaring MCP servers with read and write tools for plant and ERP-style environments, why writes need approval, and a safety notice (Gardagent is not a functional-safety system). |
-| [migration-timing.md](migration-timing.md) | How schema migrations run and measured timings on a one-million-row ledger, with the `tools/migration-timing` script used. |
+| [migration-timing.md](migration-timing.md) | Historical 0.3.0 measurements plus current locking limits, not measured versioned-migration performance. |
+| [upgrade-0.3-to-1.0.md](upgrade-0.3-to-1.0.md) | Upgrading from 0.3.0 to v1: backup, migrations, operators, MCP changes, limits and restore. |
+| [v1-readiness.md](v1-readiness.md) | Eleven exit criteria and human-only checks before a v1 release decision. |
+| [rate-limits.md](rate-limits.md) | Per-agent `requestsPerMinute` and `maxConcurrentRequests`, HTTP 429 behaviour and process-local limits. |
+| [verify.md](verify.md) | Offline ledger verification with the `@gardagent/verify` CLI, export preparation and what success proves. |
+| [verify-release.md](verify-release.md) | Verifying a published image: signature, provenance, SBOM and the first tagged-release checklist. |
 | [compatibility.md](compatibility.md) | What is stable from 1.0 (HTTP API, error codes, agent key format, ledger format, schema, environment variables), what "compatible" means, the deprecation rule and what is not covered. |
 | [ledger-format.md](ledger-format.md) | The ledger format: version 1 as written by 0.3.0 (fields, canonical JSON, hash input, chain rule) and the version 2 specification. |
 | [mandate.md](mandate.md) | The v1 mandate model: operators, policy revisions, approvals correlated to the entries they authorize, and what a token does not prove. |
-| [mcp-matrix.md](mcp-matrix.md) | Target governance of every MCP method, notification and transport the proxy can see. |
+| [mcp-matrix.md](mcp-matrix.md) | Implemented governance of every MCP method, notification and transport the proxy can see. |
 | [../deploy/README.md](../deploy/README.md) | The deployment kit: Docker Compose stack, Caddy TLS edge, install, backup, restore and rotation scripts. |
 
 ## Technical archives (validation reports)

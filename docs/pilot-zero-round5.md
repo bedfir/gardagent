@@ -1,5 +1,9 @@
 # End-to-end validation, round 5 and real outage scenarios (v0.2-8), 2026-10-22
 
+Historical report for the build named below, not current v1 behavior. See
+[v1 readiness](v1-readiness.md) for current evidence and gaps and [reference.md](reference.md)
+for implemented behavior. Historical observations and unresolved limits are retained.
+
 Test server (`<test-server>`, test only, no real data). Build under test: main at `2eba5d4`
 (ledger filters), deployed by rsync (excluding `deploy/.env`, `.git`, `node_modules`, `dist`, backups, `.pnpm-store`;
 no `--delete`), `docker compose build --no-cache gateway`, `up -d`. No product code was modified. All figures below

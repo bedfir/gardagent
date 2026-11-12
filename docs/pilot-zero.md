@@ -1,5 +1,9 @@
 # End-to-end validation harness ("pilot zero")
 
+The setup and criteria below describe the harness; dated rounds are historical
+observations, not current acceptance results. See [v1 readiness](v1-readiness.md)
+for current evidence and gaps. Only humans run real-provider scenarios.
+
 ## Goal
 
 The end-to-end validation (historically called "pilot zero") checks that Gardagent behaves as documented when it runs with
@@ -19,7 +23,7 @@ at 1 USD. The harness lives in `tools/pilot-zero` and its environment variables 
   `pilot-zero-mcp-*`).
 - MCP: the reference server `@modelcontextprotocol/server-everything` in streamable HTTP mode, container
   `ga-mcp-everything` (no secret), declared in `.env` as
-  `GARDAGENT_MCP_SERVERS={"everything":{"url":"http://ga-mcp-everything:3001/mcp","headers":{}}}`.
+  `GARDAGENT_MCP_SERVERS={"everything":{"url":"http://ga-mcp-everything:3001/mcp","headers":{},"readTools":["echo"]}}`.
 - The provider requires an `x-opencode-session` header; the gateway forwards it, the harness sends it on both paths.
 - Run a round: `sh tools/pilot-zero/run-round.sh` (about 6 minutes). It runs `run.mjs` (criteria a-g, i) in
   `node:22-alpine` on the compose network, then `backup-restore.sh` (h) and `latency-stub.sh` (e, p95 gate).
@@ -65,12 +69,12 @@ produced ledger entries for `opencode-dev` (kimi-k2.7-code, 6119 and 6031 prompt
 | Id | Criterion | Measure |
 |----|-----------|---------|
 | a | Ledger chain valid after every test | `/admin/ledger/verify` returns `valid: true` after each test step |
-| b | Zero missing ledger entries | every request the harness sent (matched by agent and request hash) appears in the ledger |
+| b | Zero missing ledger entries | every acknowledged successful request (matched by agent and request hash) appears in the ledger |
 | c | Cost accuracy | per-request, ledger cost within +/-10% of the cost computed from the provider's returned token usage and the price table |
 | d | Budget never exceeded | with a tiny daily budget and 20 concurrent plus 10 sequential real streaming requests, ledger spend stays under the budget, some requests are refused (429), no reservation is left over |
 | e | Gateway overhead | p95 overhead under 100 ms, measured against a stub upstream (at least 300 pairs, `latency-stub.sh`). This isolates the gateway's own cost. The comparison against the real provider stays in the harness as an informational measurement (median, reported, never pass/fail) because provider jitter (seconds) makes it meaningless as a gate |
 | f | Streaming identical | 6 prompts at temperature 0, each sent N times directly and N times through the gateway (N = `PZ_F_SAMPLES`, default 5, 1 to 25, alternating direct/gateway). The outcome of a sample is its content plus finish_reason. A side has a majority outcome when strictly more than half of its N samples (failed calls count against) share it. No direct majority: the provider is not deterministic on that prompt and the prompt is left out. Otherwise the prompt passes if both majority outcomes are equal; a gateway side without a majority, or a different one, fails. The gateway streams must end with `[DONE]` on a majority of samples. The criterion passes if at least 3 prompts are determined, all of them pass, and all of them end with `[DONE]`. The report lists the outcome counts and every sample of a failing prompt. Logic and tests: `tools/pilot-zero/pairing.mjs`, `pairing.selftest.mjs`. Cost: 6 x 2 x N streaming calls (60 with the default), instead of 18 with the former single pair |
-| g | Restarts | restarting the gateway, then PostgreSQL, during traffic: every acknowledged (HTTP 200) request is in the ledger, the chain stays valid, and the gateway serves again by itself within 60 s |
+| g | Restarts | restarting the gateway, then PostgreSQL, during traffic: every acknowledged (HTTP 200) request is in the ledger, failures are classified by cause/status/code, the chain stays valid, no reservations remain and spend matches ledger costs; the gateway serves again by itself within 60 s. The strict reservation check may fail before TTL cleanup; see [M01](design/M01.md). |
 | h | Backup and restore | `pg_dump` then restore (same logic as `deploy/backup.sh` / `restore.sh`, into a scratch database served by a second gateway) yields a valid ledger with the same head hash |
 | i | MCP | real server behind `/mcp/everything`: allowed read tool (`echo`), denied tool (`get-env`), approval-required tool (`get-sum`) approved and rejected through the admin API; all ledgered |
 

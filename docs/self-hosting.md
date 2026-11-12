@@ -52,8 +52,8 @@ Base URLs then become `https://<GARDAGENT_DOMAIN>/v1` (OpenAI SDK) or `https://<
 
 `/admin/*` and `/console/*` answer 403 unless the source address is within `GARDAGENT_ADMIN_ALLOWED_CIDRS` (default: the
 private ranges and `127.0.0.1/32`). Narrow it to your administrators' subnet, then run
-`docker compose -f deploy/docker-compose.prod.yml up -d`. Agent traffic (`/v1/*`) is not affected. Per-agent rate limiting is
-not implemented yet; daily budgets cap the spend of each agent. If the administrator is outside the allowed ranges, use an SSH
+`docker compose -f deploy/docker-compose.prod.yml up -d`. Agent traffic (`/v1/*`) is not affected. Optional [per-agent admission and concurrency limits](rate-limits.md)
+are configured through the agent API; they default to unlimited and reset on restart. If the administrator is outside the allowed ranges, use an SSH
 tunnel as described in `deploy/README.md`.
 
 The restriction is enforced by Caddy, not by the gateway application, which does no source-address filtering of its own. The
@@ -124,9 +124,9 @@ client.messages.create(model="minimax-m3", max_tokens=256, messages=[{"role": "u
 
 ## Observe mode
 
-To measure what the rules would block without blocking anything, start the gateway with `GARDAGENT_MODE=observe` in
+To measure policy violations without enforcing those policy limits, start the gateway with `GARDAGENT_MODE=observe` in
 `deploy/.env`. Requests that would be denied are forwarded and logged with a reason prefixed by `observed:`. Invalid agent keys
-are still rejected in both modes.
+are still rejected in both modes. Malformed MCP framing and durable approval-state outage refusals also remain blocking.
 
 ## Routine checks
 
@@ -155,6 +155,10 @@ continuing. `pnpm report` generates a Markdown usage report (summary, agents and
 - To remove an installation completely, export or back up the ledger first (removal is irreversible), then run
   `docker compose -f deploy/docker-compose.prod.yml down -v` and `rm -f deploy/.env`.
 
+See [the 0.3.0-to-v1 upgrade guide](upgrade-0.3-to-1.0.md) for matched database/spool backups, named operators,
+MCP changes, rate limits and restore. The convenience restore script does not make SQL errors fatal, select
+the matching executable or restore the spool; use the explicit isolated recovery procedure for upgrade rehearsal.
+
 ## Database upgrades
 
 Stop the gateway and take a database backup before upgrading. Keep the matching executable with the backup.
@@ -162,8 +166,8 @@ Startup applies ordered migrations under a PostgreSQL advisory lock, before list
 record commit together. A failure reports the migration number and reason; earlier committed versions remain intact.
 Fix the reported cause and restart. Do not edit `schema_migrations` to bypass a failure.
 
-A complete 0.3.0 database is adopted as version 1: existing ledger rows, hashes, spend and the append-only trigger are
-untouched. Incomplete unversioned schemas are refused rather than repaired. A database newer than the executable is
+A complete 0.3.0 database is adopted as migration version 1; subsequent steps add ledger metadata, policy revisions,
+operators and optional rate limits. Existing ledger rows, hashes, spend and the append-only trigger are untouched. Incomplete unversioned schemas are refused rather than repaired. A database newer than the executable is
 also refused. For rollback, stop the gateway and restore the pre-upgrade backup with its matching executable; there
 are no automatic down migrations. Verify `/admin/ledger/verify` after an upgrade or restore, and compare spend with
 the pre-upgrade record. Versioned restarts do not rebuild application indexes or replace triggers.
