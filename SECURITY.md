@@ -49,3 +49,9 @@ Out of scope:
 - Vulnerabilities in third-party dependencies with no demonstrated impact on Gardagent (please report those upstream).
 
 Gardagent is a governance gateway, not a functional-safety system; see [docs/industrial-setup.md](docs/industrial-setup.md).
+
+## Release image verification
+
+For images produced by the release-chain workflow, verify the immutable image index digest, its keyless Sigstore signature, and its attached BuildKit provenance and SPDX inventory before deployment. Follow [the release verification procedure](docs/verify-release.md), including its first-release checklist. Earlier images may lack this evidence, and a failed signing job can leave an unsigned image in the registry.
+
+The signature establishes the GitHub workflow/tag identity that signed the digest; it does not establish code safety or a human operator's identity. The attached inventory and provenance are build-system assertions bound by the signed index. Builds are not reproducible bit for bit. End-to-end publication and verification remain untested until a human pushes a tag and records the checklist results.
