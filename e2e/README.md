@@ -8,6 +8,14 @@ Keep the pinned dependency, image file and CI container version together when
 upgrading Playwright. The runner processes `.team/pnpm-requests.txt` before running
 the gate; that step generates the dependency manifest and lockfile changes.
 
+The browser image supplies browsers and system libraries, but does not guarantee
+pnpm or Corepack. Provision pnpm 10.28.0 before invoking the root script. CI does
+this with `pnpm/action-setup`. A container runner using npm can install it into a
+writable prefix (for example, `npm install --prefix /cache/pnpm --no-package-lock
+--no-save pnpm@10.28.0`), then prepend `/cache/pnpm/node_modules/.bin` to `PATH`
+before running `pnpm test:e2e`. This setup belongs to the runner, before the script
+is invoked; suppressing a failed `corepack enable` leaves pnpm unavailable.
+
 Each test starts its own real gateway on an ephemeral loopback port with a fresh
 MemoryStore and serves `apps/console/dist`. Admin routes are authenticated with an
 obviously fake token. The upstream adapter returns local synthetic responses;
