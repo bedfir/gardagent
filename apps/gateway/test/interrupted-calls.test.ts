@@ -199,11 +199,10 @@ describe.skipIf(!url)("interrupted calls: PostgreSQL specifics", () => {
     await p.end();
   });
 
-  it("the migration adds the reservation metadata columns idempotently on an older table", async () => {
+  it("versioned restarts preserve the reservation metadata columns", async () => {
     const p = await freshSchema("interrupted_test3");
     const store = new PgStore(p);
     await store.migrate();
-    await p.query("ALTER TABLE agent_reservations DROP COLUMN action, DROP COLUMN model, DROP COLUMN request_hash");
     await store.migrate();
     await store.migrate();
     const cols = await p.query<{ column_name: string }>(

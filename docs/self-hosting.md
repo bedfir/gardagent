@@ -154,3 +154,20 @@ continuing. `pnpm report` generates a Markdown usage report (summary, agents and
   `sh deploy/restore.sh`. A nightly cron entry is shown in `deploy/README.md`.
 - To remove an installation completely, export or back up the ledger first (removal is irreversible), then run
   `docker compose -f deploy/docker-compose.prod.yml down -v` and `rm -f deploy/.env`.
+
+## Database upgrades
+
+Stop the gateway and take a database backup before upgrading. Keep the matching executable with the backup.
+Startup applies ordered migrations under a PostgreSQL advisory lock, before listening. Each migration and its version
+record commit together. A failure reports the migration number and reason; earlier committed versions remain intact.
+Fix the reported cause and restart. Do not edit `schema_migrations` to bypass a failure.
+
+A complete 0.3.0 database is adopted as version 1: existing ledger rows, hashes, spend and the append-only trigger are
+untouched. Incomplete unversioned schemas are refused rather than repaired. A database newer than the executable is
+also refused. For rollback, stop the gateway and restore the pre-upgrade backup with its matching executable; there
+are no automatic down migrations. Verify `/admin/ledger/verify` after an upgrade or restore, and compare spend with
+the pre-upgrade record. Versioned restarts do not rebuild application indexes or replace triggers.
+
+Only one migration process can proceed at a time. Fresh installations build ordinary indexes inside their migration
+transaction; future migrations may also require blocking DDL. Lock waits have no fixed duration. See
+[`migration-timing.md`](migration-timing.md) for historical measurements and current limits.

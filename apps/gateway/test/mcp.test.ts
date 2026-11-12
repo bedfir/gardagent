@@ -267,7 +267,7 @@ describe("mcp: read/write classification", () => {
 
 const dbUrl = process.env.TEST_DATABASE_URL;
 describe.skipIf(!dbUrl)("mcp: PostgreSQL migration", () => {
-  it("adds allowed_tools to an existing agents table, idempotently", async () => {
+  it("preserves allowed_tools across versioned restarts", async () => {
     // Concurrent fixtures also cover overlapping invocations against the same database.
     const migrateFixture = async (allowedTool: string) => {
       const schema = `ga_mcp_${randomUUID().replaceAll("-", "")}`;
@@ -276,13 +276,10 @@ describe.skipIf(!dbUrl)("mcp: PostgreSQL migration", () => {
       try {
         // Completion of CREATE SCHEMA is the readiness signal; no timing delay.
         await admin.query(`CREATE SCHEMA "${schema}"`);
-        await pool.query(`CREATE TABLE agents (id TEXT PRIMARY KEY, name TEXT NOT NULL, key_hash TEXT NOT NULL UNIQUE,
-          allowed_models TEXT[] NOT NULL, daily_budget BIGINT NOT NULL DEFAULT 0, active BOOLEAN NOT NULL DEFAULT TRUE,
-          created_at TIMESTAMPTZ NOT NULL DEFAULT now())`);
-        await pool.query("INSERT INTO agents (id, name, key_hash, allowed_models) VALUES ('old', 'ancien', 'h', '{a}')");
         const store = new PgStore(pool);
         await store.migrate();
         await store.migrate();
+        await store.createAgent({ id: "old", name: "old", keyHash: "fake", allowedModels: ["a"], allowedTools: [], approvalTools: [], dailyBudget: 0, active: true });
         expect((await store.getAgent("old"))!.allowedTools).toEqual([]);
         await store.updateAgent("old", { allowedTools: [allowedTool] });
         await store.migrate();

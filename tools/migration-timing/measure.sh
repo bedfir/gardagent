@@ -1,5 +1,5 @@
 #!/bin/sh
-# Measures the duration of the gateway schema migration (the SCHEMA constant of apps/gateway/src/pg-store.ts) on a
+# Measures the duration of historical 0.3.0 schema replay (the frozen test fixture) on a
 # synthetic ledger. Everything runs in a throwaway PostgreSQL container (own name, no published port, removed at the end).
 # usage: sh tools/migration-timing/measure.sh [rows=1000000] [repeats=3]
 # Results go to stdout as "key value" lines; docs/migration-timing.md explains the method and the limits.
@@ -8,13 +8,13 @@ ROWS=${1:-1000000}
 REPEATS=${2:-3}
 IMAGE=${PG_IMAGE:-postgres:16-alpine}
 HERE=$(cd "$(dirname "$0")" && pwd)
-SRC="$HERE/../../apps/gateway/src/pg-store.ts"
+SRC="$HERE/../../apps/gateway/test/fixtures/schema-0.3.0.sql"
 W=$(mktemp -d)
 C="ga-mig-timing-$$"
 trap 'docker rm -f "$C" >/dev/null 2>&1 || true; rm -rf "$W"' EXIT
 
-# The exact SQL the gateway runs at start: the text of the SCHEMA template literal (no interpolation inside).
-awk '/^export const SCHEMA = `/{f=1; next} f && /^`;/{exit} f' "$SRC" > "$W/schema.sql"
+# Frozen pre-M03 replay SQL; this is not the versioned startup path.
+cp "$SRC" "$W/schema.sql"
 test -s "$W/schema.sql"
 
 docker run -d --name "$C" -e POSTGRES_PASSWORD=test -e POSTGRES_DB=mig "$IMAGE" >/dev/null

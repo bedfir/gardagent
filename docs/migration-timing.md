@@ -1,3 +1,21 @@
+# Versioned migration timing (M03)
+
+Versioned startup no longer replays the SQL measured below. A complete unversioned 0.3.0 database is adopted using
+catalog reads plus a version record; no application table DDL, index build or trigger replacement runs. Subsequent
+starts read migration metadata. A session advisory lock serializes the full migration sequence; each numbered
+migration commits independently. Metadata creation and recording take locks on `schema_migrations` only.
+
+Fresh installations still execute ordinary index builds and initial table/trigger creation in one transaction,
+with locks held until commit. There are no existing ledger rows to scan in that case. An incomplete legacy schema
+is refused; M03 does not execute the historical upgrade-from-0.1.0 path below. Advisory and DDL lock waits depend
+on concurrent sessions and have no fixed upper duration. No new elapsed-time measurements have been run for M03;
+the historical 17 ms and 2.6 s figures must not be used as versioned-startup estimates.
+
+The script below remains a historical DDL benchmark using the frozen 0.3.0 fixture, not a benchmark of the new
+migration runner. Runner measurements of fresh installation, populated adoption and versioned restart remain pending.
+
+## Historical replay measurements (before M03)
+
 # Migration timing on a large ledger
 
 Measured on 2026-10-31 with `tools/migration-timing/measure.sh` (1 000 000 synthetic ledger rows, 3 repeats). Only
