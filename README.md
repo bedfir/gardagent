@@ -27,86 +27,68 @@ configuration; the agent's code does not change.
 - **MCP proxy**: governs `tools/call` on Streamable HTTP MCP servers, without exposing their credentials to agents.
 - **Admin API and console** (Vue 3, French and English): agents, spend, ledger browsing and filtering, CSV export, integrity check.
 
-## Quick start (about 5 minutes)
+## Local quickstart
 
-Requirements: Docker with Compose, `git`, `curl`, and an API key for an OpenAI-compatible provider (or any server that
-speaks that API).
-
-**1. Get the code and create your configuration.**
+Written for Linux x86-64, Docker Engine with Compose v2, a POSIX shell, Python 3,
+`git`, `curl`, and `openssl`; plan for 8 GiB RAM and 6 GiB free disk. CPU inference
+needs no GPU. Under ten minutes is a target, not yet measured by a third party.
+The first build and model download require internet access and may take longer.
+No provider key is needed. Ollama serves `qwen2.5:0.5b`; local accounting rates are
+zero, which does not measure electricity or hardware use.
 
 ```bash
 git clone https://github.com/bedfir/gardagent.git
 cd gardagent
-cp .env.example .env
-# Generate the admin token and the database password:
-sed -i "s|^GARDAGENT_ADMIN_TOKEN=.*|GARDAGENT_ADMIN_TOKEN=$(openssl rand -hex 32)|; s|^POSTGRES_PASSWORD=.*|POSTGRES_PASSWORD=$(openssl rand -hex 16)|" .env
+export GARDAGENT_ADMIN_TOKEN=$(openssl rand -hex 32)
+docker compose -f docker-compose.local.yml --profile local up -d --build
 ```
 
-Then edit `.env` and set `UPSTREAM_BASE_URL` and `UPSTREAM_API_KEY` for your provider. Base URLs are written without
-`/v1`: the gateway appends `/v1/chat/completions` and `/v1/messages`. If you do not use the Anthropic endpoint you can
-leave `ANTHROPIC_UPSTREAM_BASE_URL` as it is. Add a price for the models you use in `GARDAGENT_PRICES` (USD per million
-tokens); unknown models are priced at a deliberately high fallback so that budgets stay conservative.
-
-**2. Start the gateway and PostgreSQL.**
+Keep this shell open: the token stays in its environment, not a configuration file.
+The command downloads the model before starting the gateway. Check readiness until
+`/health` returns HTTP 200 with `"status":"ok"` and `"database":"up"`:
 
 ```bash
-docker compose up -d --build
-curl http://127.0.0.1:8080/health
+curl --fail-with-body http://127.0.0.1:8080/health
 ```
 
-The root `docker-compose.yml` publishes the gateway on `127.0.0.1:8080` only, so `/admin` and `/console` are not
-reachable from the network. Do not change that to `8080:8080` on a shared machine; for a networked deployment use the
-[`deploy/` kit](deploy/README.md). `/health` must answer `"status":"ok"` and `"database":"up"`.
-
-**3. Create an agent.** A daily budget is mandatory: `dailyBudgetUsd` must be a positive number. An agent with no cap needs
-an explicit `"dailyBudgetUsd": 0, "unlimited": true`; without a budget the request is refused with 400.
+Create an agent through the authenticated admin API, then capture its once-only key:
 
 ```bash
-export GARDAGENT_ADMIN_TOKEN=$(sed -n 's/^GARDAGENT_ADMIN_TOKEN=//p' .env)
-
-curl -s -X POST http://127.0.0.1:8080/admin/agents \
+export GA_KEY=$(curl --fail-with-body -sS http://127.0.0.1:8080/admin/agents \
   -H "Authorization: Bearer $GARDAGENT_ADMIN_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"name":"demo-agent","allowedModels":["deepseek-v4.1-flash"],"dailyBudgetUsd":2}'
-```
-
-Use a model name your provider serves. The response contains the agent key (`ga_...`) in `key`. **It is shown only
-once**; copy it now.
-
-**4. Call the gateway with any OpenAI-compatible client.**
-
-```bash
-export GA_KEY=ga_...   # the key from step 3
-
-curl -s http://127.0.0.1:8080/v1/chat/completions \
+  -H 'Content-Type: application/json' \
+  -d '{"name":"local-demo","allowedModels":["qwen2.5:0.5b","demo-anthropic"],"allowedTools":["demo/*"],"dailyBudgetUsd":1}' \
+  | python3 -c 'import json,sys; print(json.load(sys.stdin)["key"])')
+test -n "$GA_KEY"
+curl --fail-with-body -sS http://127.0.0.1:8080/v1/chat/completions \
   -H "Authorization: Bearer $GA_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{"model":"deepseek-v4.1-flash","messages":[{"role":"user","content":"Hello"}]}'
+  -H 'Content-Type: application/json' \
+  -d '{"model":"qwen2.5:0.5b","max_tokens":64,"messages":[{"role":"user","content":"Say hello in one sentence."}]}'
 ```
 
-With the OpenAI Python SDK, only the base URL and the key change:
-
-```python
-from openai import OpenAI
-
-client = OpenAI(base_url="http://127.0.0.1:8080/v1", api_key="ga_...")
-client.chat.completions.create(model="deepseek-v4.1-flash", messages=[{"role": "user", "content": "Hello"}])
-```
-
-For the Anthropic SDK use `base_url="http://127.0.0.1:8080"` (the SDK appends `/v1/messages` itself).
-
-**5. Read the ledger and open the console.**
+The first inference may take several minutes on a CPU. Authentication stays on;
+the dummy `UPSTREAM_API_KEY` in Compose is only for the local server.
+Read the call in the ledger and verify the chain:
 
 ```bash
-curl -s "http://127.0.0.1:8080/admin/ledger?order=desc&limit=5" -H "Authorization: Bearer $GARDAGENT_ADMIN_TOKEN"
-curl -s http://127.0.0.1:8080/admin/ledger/verify -H "Authorization: Bearer $GARDAGENT_ADMIN_TOKEN"
+curl --fail-with-body -sS 'http://127.0.0.1:8080/admin/ledger?order=desc&limit=5' \
+  -H "Authorization: Bearer $GARDAGENT_ADMIN_TOKEN"
+curl --fail-with-body -sS http://127.0.0.1:8080/admin/ledger/verify \
+  -H "Authorization: Bearer $GARDAGENT_ADMIN_TOKEN"
 ```
 
-`verify` answers `{"valid":true,...}` when the whole chain is intact. Costs in ledger rows are in micro-USD. The console is
-at <http://127.0.0.1:8080/console/>: log in with the value of `GARDAGENT_ADMIN_TOKEN`. A request for a model that is not
-in `allowedModels` is refused with 403 `model_not_allowed` and the refusal is logged too.
+Verification should return `"valid":true`. It checks the stored chain; detecting a
+full rewrite or tail truncation requires a checkpoint retained outside the database.
+Open <http://127.0.0.1:8080/console/> and log in with the bootstrap token.
+Only the gateway is published, on loopback. This profile is a local demonstration;
+its database password is deliberately fake. The Anthropic endpoint uses a synthetic
+fixture, while OpenAI calls use Ollama. Do not expose this profile to a network.
 
-To stop everything: `docker compose down` (add `-v` to also delete the database and the ledger).
+Run the [OpenAI SDK](examples/openai/README.md), [Anthropic SDK (format-compatible)](examples/anthropic/README.md),
+and [MCP approval](examples/mcp/README.md) examples in the same shell.
+Stop with `docker compose -f docker-compose.local.yml --profile local down`.
+Adding `-v` deletes the local database, model weights, and spool. A new bootstrap
+token on a later start changes the console login; existing agent keys remain valid.
 
 ### Published image
 
@@ -135,7 +117,8 @@ pnpm report --url http://127.0.0.1:8080 --days 7 --out report.md   # --days: 1 t
 
 ## Configuration
 
-Configuration is read from environment variables (in the Compose files, from `.env`). Only `UPSTREAM_BASE_URL`,
+Configuration is read from environment variables. The local profile supplies them directly; the other Compose files
+use `.env`. Only `UPSTREAM_BASE_URL`,
 `UPSTREAM_API_KEY` and `GARDAGENT_ADMIN_TOKEN` are required. Invalid values stop the gateway at startup with an explicit
 message. The detailed behavior of each group is described in [docs/reference.md](docs/reference.md).
 

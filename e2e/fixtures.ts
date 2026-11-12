@@ -3,6 +3,7 @@ import { fileURLToPath } from "node:url";
 import { MemoryStore } from "../packages/core/dist/index.js";
 import { buildApp } from "../apps/gateway/dist/app.js";
 import type { GatewayConfig } from "../apps/gateway/dist/config.js";
+import { fixtureShutdown } from "./gateway-lifecycle";
 
 export const ADMIN_TOKEN = "fake-e2e-admin-token-for-browser-tests";
 
@@ -37,11 +38,12 @@ export const test = base.extend<{
         { headers: { "content-type": "application/json" } });
       },
     });
+    const shutdown = fixtureShutdown(app.server, () => app.close());
     try {
       const url = await app.listen({ host: "127.0.0.1", port: 0 });
       await use({ url, forwarded });
     } finally {
-      await app.close();
+      await shutdown();
     }
   },
 });
