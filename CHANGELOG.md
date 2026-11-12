@@ -8,6 +8,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- New ledger entries use format version 2 with hashed optional revision, operator and approval references; historical version 1 entries remain unchanged and unknown versions fail verification.
+
 - PostgreSQL startup uses transactional numbered migrations under an advisory lock, adopts databases already complete at the 0.3.0 schema without replaying application DDL, and refuses newer schema versions.
 
 ### Added

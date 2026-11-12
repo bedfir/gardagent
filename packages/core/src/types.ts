@@ -23,6 +23,11 @@ export type ToolAccessClass = "read" | "write";
 
 /** What the gateway asks to write into the ledger. */
 export interface LedgerInput {
+  /** Absent on historical entries; new store writes use version 2. */
+  formatVersion?: number;
+  policyRev?: string;
+  operatorId?: string;
+  approvalRef?: string;
   ts: string;
   agentId: string | null;
   action: string;

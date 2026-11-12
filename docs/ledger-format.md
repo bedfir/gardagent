@@ -3,7 +3,7 @@
 This document is the written contract of the Gardagent ledger. A third party who has a copy of the entries, and nothing
 else, can verify the chain by following it. Format version 1 is what 0.3.0 writes, described from the code in
 `packages/core/src/hash.ts`, `packages/core/src/ledger.ts` and `packages/core/src/types.ts`. Format version 2 is the
-specification that M04 and M05 implement; nothing in version 2 is implemented yet.
+format implemented by M04 for storage and generic verification; M05 supplies mandate metadata and gateway approval verification.
 
 The words "MUST", "MUST NOT" and "MAY" are used in their usual normative sense.
 
@@ -88,7 +88,7 @@ for every entry in order:
    `link_mismatch`.
 3. The recomputed hash equals `hash`. A mismatch is reported as `hash_mismatch`.
 
-The check order is seq, link, hash. The `head` of a valid chain is the `hash` of its last entry (the genesis hash if the
+The version 1 check order is seq, link, hash. The `head` of a valid chain is the `hash` of its last entry (the genesis hash if the
 chain is empty).
 
 ### 1.5 What version 1 does and does not prove
@@ -109,7 +109,7 @@ MCP arguments lives in the `approvals` table.
 when true. The golden fixtures in `test/fixtures/contracts/` are such entries, produced by the real code paths, and
 `apps/gateway/test/contracts.test.ts` fails if any of them stops verifying.
 
-## 2. Format version 2 (specification for M04 and M05)
+## 2. Format version 2
 
 Version 2 records the mandate (see [mandate.md](mandate.md)) in the ledger. It adds fields and a version marker without
 changing a single byte of the hash of a version 1 entry.
@@ -154,6 +154,14 @@ The first version 2 entry is chained to the last version 1 entry through `prevHa
 break and no special entry.
 
 ### 2.3 Companion rules checked by the verifier
+
+M04 core verification checks generic field constraints: optional references must be non-empty strings, `policyRev`
+must be 64 lowercase hex, and `degraded`, if present, must be true. It checks sequence, link, supported version,
+hash, then content and version ordering. Unknown versions report `unsupported_format`; invalid content or a version
+regression reports `invalid_format`. Partial verification checks version ordering only within the supplied range.
+The action-specific approval checks below belong to the gateway verifier implemented with M05; they are not
+performed by core verification. Until M05, a version 2 marker alone makes no claim that mandate metadata is populated.
+
 
 For entries of format version 2 (these are checks on content, in addition to the chain rule of section 1.4):
 

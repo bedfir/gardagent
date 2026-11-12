@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   canonicalJson,
+  MemoryStore,
   chainEntry,
   GENESIS_HASH,
   verifyChain,
@@ -85,5 +86,40 @@ describe("canonicalJson", () => {
   it("keeps array order and ignores undefined keys", () => {
     expect(canonicalJson([2, 1])).not.toBe(canonicalJson([1, 2]));
     expect(canonicalJson({ a: 1, b: undefined })).toBe('{"a":1}');
+  });
+});
+
+
+describe("ledger format 2", () => {
+  it("verifies a historical prefix followed by a new writer entry", async () => {
+    const store = new MemoryStore();
+    const historical = chainEntry(1, GENESIS_HASH, input(1));
+    // Seed historical persisted state to exercise the upgrade boundary in the same store.
+    (store as unknown as { ledger: LedgerEntry[] }).ledger.push(historical);
+    const next = await store.appendLedger({ ...input(2), policyRev: "a".repeat(64), operatorId: "operator", approvalRef: "reference" });
+    expect(next.formatVersion).toBe(2);
+    const entries = await store.listLedger();
+    expect(entries[0]).toEqual(historical);
+    expect(entries[0]).not.toHaveProperty("formatVersion");
+    expect(verifyChain(entries).valid).toBe(true);
+    for (const key of ["policyRev", "operatorId", "approvalRef"] as const) {
+      expect(verifyChain([historical, { ...next, [key]: "tampered" }])).toMatchObject({ brokenAtSeq: 2, problem: "hash_mismatch" });
+    }
+    expect(verifyChain([historical, { ...next, formatVersion: 99 }])).toMatchObject({ brokenAtSeq: 2, problem: "unsupported_format" });
+    const { formatVersion: _version, ...withoutVersion } = next;
+    expect(verifyChain([historical, withoutVersion])).toMatchObject({ brokenAtSeq: 2, problem: "hash_mismatch" });
+  });
+
+  it("rejects rehashed invalid format content and version regression", () => {
+    const first = chainEntry(1, GENESIS_HASH, { ...input(1), formatVersion: 2 });
+    const old = chainEntry(2, first.hash, input(2));
+    expect(verifyChain([first, old])).toMatchObject({ brokenAtSeq: 2, problem: "invalid_format" });
+    for (const extra of [{ policyRev: "a".repeat(64) }, { operatorId: "operator" }, { approvalRef: "ref" }]) {
+      expect(verifyChain([chainEntry(1, GENESIS_HASH, { ...input(1), ...extra })])).toMatchObject({ problem: "invalid_format" });
+    }
+    for (const extra of [{ policyRev: "bad" }, { operatorId: "" }, { approvalRef: "" }, { degraded: false }]) {
+      expect(verifyChain([chainEntry(1, GENESIS_HASH, { ...input(1), formatVersion: 2, ...extra })])).toMatchObject({ problem: "invalid_format" });
+    }
+    expect(verifyChain([chainEntry(1, GENESIS_HASH, { ...input(1), formatVersion: 1 })])).toMatchObject({ problem: "unsupported_format" });
   });
 });

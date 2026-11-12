@@ -14,7 +14,7 @@ export function chainEntry(seq: number, prevHash: string, input: LedgerInput): L
 
 export type ChainCheck =
   | { valid: true; count: number; lastHash: string }
-  | { valid: false; count: number; brokenAtSeq: number; problem: "hash_mismatch" | "link_mismatch" | "seq_gap" };
+  | { valid: false; count: number; brokenAtSeq: number; problem: "hash_mismatch" | "link_mismatch" | "seq_gap" | "unsupported_format" | "invalid_format" };
 
 /**
  * Verifies the integrity of a sequence of consecutive rows.
@@ -23,6 +23,7 @@ export type ChainCheck =
 export function verifyChain(entries: LedgerEntry[], startPrevHash: string = GENESIS_HASH): ChainCheck {
   let prev = startPrevHash;
   let expectedSeq = entries[0]?.seq ?? 1;
+  let version2Seen = false;
   for (const entry of entries) {
     if (entry.seq !== expectedSeq) {
       return { valid: false, count: entries.length, brokenAtSeq: entry.seq, problem: "seq_gap" };
@@ -30,10 +31,23 @@ export function verifyChain(entries: LedgerEntry[], startPrevHash: string = GENE
     if (entry.prevHash !== prev) {
       return { valid: false, count: entries.length, brokenAtSeq: entry.seq, problem: "link_mismatch" };
     }
+    if ("formatVersion" in entry && entry.formatVersion !== 2) {
+      return { valid: false, count: entries.length, brokenAtSeq: entry.seq, problem: "unsupported_format" };
+    }
     const { seq, prevHash, hash, ...input } = entry;
     if (hashEntry(seq, prevHash, input) !== hash) {
       return { valid: false, count: entries.length, brokenAtSeq: entry.seq, problem: "hash_mismatch" };
     }
+    const v2 = entry.formatVersion === 2;
+    const fields = ["policyRev", "operatorId", "approvalRef"] as const;
+    if ((!v2 && (version2Seen || fields.some((key) => key in entry))) ||
+        (v2 && (fields.some((key) => key in entry &&
+          (typeof entry[key] !== "string" || entry[key]!.length === 0)) ||
+          (entry.policyRev !== undefined && !/^[0-9a-f]{64}$/.test(entry.policyRev)) ||
+          ("degraded" in entry && entry.degraded !== true)))) {
+      return { valid: false, count: entries.length, brokenAtSeq: entry.seq, problem: "invalid_format" };
+    }
+    version2Seen ||= v2;
     prev = hash;
     expectedSeq += 1;
   }

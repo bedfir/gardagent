@@ -19,6 +19,10 @@ interface AgentRow {
 }
 
 interface LedgerRow {
+  format_version: number | null;
+  policy_rev: string | null;
+  operator_id: string | null;
+  approval_ref: string | null;
   seq: string;
   ts: string;
   agent_id: string | null;
@@ -100,6 +104,10 @@ async function addSpendOnce(db: Pick<pg.Pool, "query">, agentId: string, day: st
 
 function toEntry(row: LedgerRow): LedgerEntry {
   return {
+    ...(row.format_version != null ? { formatVersion: row.format_version } : {}),
+    ...(row.policy_rev != null ? { policyRev: row.policy_rev } : {}),
+    ...(row.operator_id != null ? { operatorId: row.operator_id } : {}),
+    ...(row.approval_ref != null ? { approvalRef: row.approval_ref } : {}),
     seq: Number(row.seq),
     ts: row.ts,
     agentId: row.agent_id,
@@ -128,11 +136,11 @@ function defaultPoolLog(message: string, error: unknown): void {
 async function insertChained(client: Pick<pg.Pool, "query">, input: LedgerInput): Promise<LedgerEntry> {
   const { rows } = await client.query<{ seq: string; hash: string }>("SELECT seq, hash FROM ledger ORDER BY seq DESC LIMIT 1");
   const last = rows[0];
-  const entry = chainEntry(last ? Number(last.seq) + 1 : 1, last?.hash ?? GENESIS_HASH, input);
+  const entry = chainEntry(last ? Number(last.seq) + 1 : 1, last?.hash ?? GENESIS_HASH, { ...input, formatVersion: 2 });
   await client.query(
     `INSERT INTO ledger (seq, ts, agent_id, action, model, verdict, reason, upstream_status,
-       prompt_tokens, completion_tokens, cost, request_hash, response_hash, prev_hash, hash, degraded)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`,
+       prompt_tokens, completion_tokens, cost, request_hash, response_hash, prev_hash, hash, degraded, format_version, policy_rev, operator_id, approval_ref)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)`,
     [
       entry.seq,
       entry.ts,
@@ -150,6 +158,10 @@ async function insertChained(client: Pick<pg.Pool, "query">, input: LedgerInput)
       entry.prevHash,
       entry.hash,
       entry.degraded === true,
+      entry.formatVersion,
+      entry.policyRev ?? null,
+      entry.operatorId ?? null,
+      entry.approvalRef ?? null,
     ],
   );
   return entry;

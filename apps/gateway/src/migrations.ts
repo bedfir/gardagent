@@ -228,6 +228,13 @@ async function initialize(client: pg.PoolClient): Promise<void> {
 
 export const MIGRATIONS: readonly Migration[] = [
   { version: 1, name: "0.3.0 baseline", up: initialize },
+  { version: 2, name: "Ledger format 2", up: async (client) => {
+    await client.query(`ALTER TABLE ledger
+      ADD COLUMN format_version INTEGER,
+      ADD COLUMN policy_rev TEXT,
+      ADD COLUMN operator_id TEXT,
+      ADD COLUMN approval_ref TEXT`);
+  } },
 ];
 
 /** The optional migration list permits rollback tests without shipping a failing migration. */
