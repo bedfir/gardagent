@@ -100,6 +100,8 @@ export const fr = {
   "problem.hash_mismatch": "contenu modifié",
   "problem.link_mismatch": "chaînage rompu",
   "problem.seq_gap": "ligne manquante",
+  "problem.unsupported_format": "version du format du journal non prise en charge",
+  "problem.invalid_format": "contenu ou ordre des versions du journal invalide",
   "problem.unknown": "problème inconnu",
 
   "ledger.title": "Journal",

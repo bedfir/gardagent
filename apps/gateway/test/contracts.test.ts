@@ -272,7 +272,7 @@ describe("contract: ledger format version 1", () => {
   it("the golden entries verify with the current code", () => {
     expect(ledger.formatVersion).toBe(1);
     expect(ledger.entries.length).toBeGreaterThan(10);
-    expect(verifyChain(ledger.entries)).toEqual({ valid: true, count: ledger.entries.length, lastHash: ledger.head });
+    expect(verifyChain(ledger.entries)).toEqual({ valid: true, count: ledger.entries.length, lastHash: ledger.head, lastVersion: 1 });
     expect(ledger.entries[0]!.prevHash).toBe(GENESIS_HASH);
   });
 
