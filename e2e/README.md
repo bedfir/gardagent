@@ -16,12 +16,11 @@ writable prefix (for example, `npm install --prefix /cache/pnpm --no-package-loc
 before running `pnpm test:e2e`. This setup belongs to the runner, before the script
 is invoked; suppressing a failed `corepack enable` leaves pnpm unavailable.
 
-The local gate currently stops before the browser suite with `pnpm: not found`.
-Its external `gate.sh` suppresses Corepack bootstrap errors, then invokes
-`pnpm test:e2e`. The runner must provision pnpm successfully inside the Playwright
-container before that invocation and stop immediately if provisioning fails.
-Repository scripts cannot repair executable lookup before they start. Browser
-acceptance remains unverified until the corrected runner executes the suite.
+Earlier gate attempts reported `pnpm: not found` before browser execution. The
+runner must provision pnpm successfully inside the Playwright container before
+invoking the script and stop immediately if provisioning fails. Browser acceptance
+remains unverified until the runner reports a passing suite. The current checkout
+includes the pinned Playwright dependency and its generated lockfile entries.
 
 Each test starts its own real gateway on an ephemeral loopback port with a fresh
 MemoryStore and serves `apps/console/dist`. Admin routes are authenticated with an
