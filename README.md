@@ -98,7 +98,7 @@ token on a later start changes the console login; existing agent keys remain val
 When a release is published, its image is available from the GitHub Container Registry:
 
 ```bash
-docker pull ghcr.io/bedfir/gardagent:<version>   # for example 0.3.0, or "latest"
+docker pull ghcr.io/bedfir/gardagent:<version>   # for example 0.4.0, or "latest"
 ```
 
 This works only after the first release has been published by the release workflow; until then, build from source as

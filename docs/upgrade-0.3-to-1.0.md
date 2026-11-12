@@ -1,4 +1,4 @@
-# Upgrade from 0.3.0 to v1
+# Upgrade from 0.3.0 to 0.4.0 (the path to 1.0)
 
 This guide describes the v1 development branch; it does not announce a release.
 Use a reviewed executable or image and retain its exact source revision or digest.
