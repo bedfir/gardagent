@@ -1,6 +1,6 @@
 # MCP governance matrix
 
-Target behaviour of the MCP proxy for v1, to be implemented by M08. The rule is that **nothing passes silently**: every
+Behaviour of the MCP proxy for v1, implemented by M08. The rule is that **nothing passes silently**: every
 message the proxy can see is either *governed and journaled*, *handled locally* (answered by the gateway, never
 forwarded), or *refused* (never forwarded, answered with an error). Anything not listed here is refused. The matrix is
 an allow-list, not a deny-list: a new method or notification added by a later revision of the protocol is refused until
@@ -32,14 +32,14 @@ M08 replaces that test, as allowed by the team rules.
 | stdio transport | Not applicable | Gardagent is an HTTP gateway; a stdio server is reached through its own HTTP bridge, declared as a URL. |
 | `mcp-session-id`, `mcp-protocol-version` headers | Relayed both ways (unchanged) | Opaque to the proxy. |
 | Unknown server name | HTTP 404, `-32000` (unchanged) | Not declared. |
-| Missing or invalid agent key | HTTP 401 (503 `agent_unverifiable_during_outage` during an outage), journaled as `invalid_key` (unchanged) | Authentication comes first for every row of this table. |
+| Missing or invalid agent key | HTTP 401 (503 `agent_unverifiable_during_outage` during an outage), journaled as `invalid_key` (unchanged) | Authentication comes first for POST; unsupported GET and DELETE return 405 without admission. |
 
 ## 2. Client-to-server requests (have an `id` and a `method`)
 
 | Method | Decision | Ledger row | Reason |
 | --- | --- | --- | --- |
-| `initialize` | Governed: forwarded | `mcp.initialize`, allowed, cost 0 | Opens the session; proves which agent opened it and which protocol version was negotiated. No tool is exposed by it. |
-| `ping` | Handled locally: the gateway answers `{}` | None | No effect and no data; journaling liveness probes would drown the ledger. Not forwarded, so it cannot carry data upstream. |
+| `initialize` | Governed: forwarded | `mcp.initialize`, allowed, cost 0 | Opens the session; proves which agent opened it and which protocol version was negotiated. Only the tools capability is advertised in enforce mode; unsupported capability declarations are removed. |
+| `ping` | Handled locally: the gateway answers `{}` | `mcp.ping`, allowed, cost 0 | Local liveness is recorded too. Not forwarded, so it cannot carry data upstream. |
 | `tools/list` | Governed: forwarded, and the result is **filtered to the tools the agent is allowed to call** | `mcp.tools/list`, allowed, cost 0 | The list is the agent's view of its mandate; tools outside it must not be advertised. |
 | `tools/call` | Governed as in 0.3.0: tool allow-list, read/write class, approval, journal | `mcp.tools/call` (plus approval rows) | The only method that acts. |
 | `resources/list`, `resources/templates/list`, `resources/read` | Refused, HTTP 200 with JSON-RPC error `-32601`, journaled denial | `mcp.<method>`, denied, reason `method_not_governed` | Mandates in v1 cover tools. Reading arbitrary resources would be data access outside the mandate. |
@@ -77,10 +77,10 @@ section 1).
 | The JSON-RPC response to the request | Relayed; hashed into `responseHash` | The governed outcome. |
 | `notifications/progress`, `notifications/message` (logging), `notifications/cancelled` | Relayed | Informational, part of the stream whose text is hashed. |
 | `notifications/tools/list_changed`, `notifications/prompts/list_changed`, `notifications/resources/list_changed`, `notifications/resources/updated` | Relayed | Informational; acting on them needs a governed `tools/list`, or a refused method. |
-| `sampling/createMessage` (the server asks the agent's model to generate) | Not relayed; the call is journaled with reason `server_request_refused` | It would make the agent's model work for the server outside the agent's model allow-list and budget. |
+| `sampling/createMessage` (the server asks the agent's model to generate) | Not relayed; a separate denial row is journaled with reason `server_request_refused` | It would make the agent's model work for the server outside the agent's model allow-list and budget. |
 | `elicitation/create`, `roots/list` | Not relayed; same journal reason | The agent has no human to ask, and roots are not supported. |
-| `ping` from the server | Not relayed; the gateway does not answer | No effect on the governed call. |
-| Any other server-initiated request | Not relayed; same journal reason | Default deny. |
+| `ping` from the server | Not relayed; journaled as `server_request_refused`; the gateway does not answer | No effect on the governed call. |
+| Any other server-initiated request or unknown notification | Not relayed; same journal reason | Default deny. |
 
 Because a server-initiated request that is not relayed is never answered, the upstream call may then wait. The
 proxy limits that wait with the existing upstream timeout and ends the stream; the row carries the reason.
@@ -89,7 +89,7 @@ proxy limits that wait with the existing upstream timeout and ends the stream; t
 
 - New actions follow the existing naming: `mcp.initialize`, `mcp.tools/list`, and `mcp.<method>` for refusals.
 - All rows carry `cost` 0, `promptTokens` 0, `completionTokens` 0; `model` is `<server>/-` when no tool is concerned
-  (the exact placeholder is for M08 to fix and test; it must not collide with `<server>/<tool>#read|write`).
+  (this placeholder does not collide with `<server>/<tool>#read|write`).
 - In `observe` mode the proxy forwards what `enforce` mode would refuse, journaling the row with reason
   `observed:method_not_governed` (as `observed:tool_not_allowed` today). `observe` never turns a refusal of section 1
   (malformed or unsupported framing) into a forward.
@@ -102,3 +102,13 @@ proxy limits that wait with the existing upstream timeout and ends the stream; t
     the client sent in `params`, not the method name, which the `action` field carries.
 - The matrix is tested by a table-driven test in M08: one case per row above, asserting the HTTP outcome, whether the
   upstream was called, and the ledger row.
+
+## Implementation details and framing limits
+
+- Request and notification shapes are distinct: a request-only method sent as a notification (or the reverse) is undeclared and follows default refusal. Malformed parameters remain refused in both modes. Cancel notifications require a string or numeric requestId.
+- Server messages are inspected in JSON responses as well as complete SSE events, including events split across network chunks. Only responses matching the initiating id are relayed. Malformed JSON, batches and mismatched responses are suppressed; JSON responses receive -32603. SSE comments and events without JSON data are suppressed. Non-JSON upstream HTTP errors become JSON-RPC errors rather than unclassified pass-through.
+- Declared server notifications are covered by the parent call's responseHash. Each suppressed server request or undeclared notification has its own zero-cost denial row. In observe mode it is relayed with an allowed row carrying observed:server_request_refused.
+- Observe mode retains unfiltered listings and initialization capabilities, recording observed:tool_not_allowed or observed:method_not_governed respectively. Only tools capabilities are advertised in enforce mode.
+- Notifications always receive empty HTTP 202 after journaling. An unexpected SSE response to a notification is cancelled and recorded as unexpected_notification_stream, never relayed.
+- The existing approval-store outage refusal remains in observe mode: it cannot safely execute a write without the required durable approval state. Unsupported framing also remains refused in observe mode.
+- Legacy SSE paths have no route; other unsupported HTTP verbs use the framework's route refusal and are never forwarded.

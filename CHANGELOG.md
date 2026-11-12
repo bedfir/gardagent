@@ -8,6 +8,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- MCP uses explicit method governance, journals non-tool traffic and refusals, filters capability listings, and screens server messages in JSON and SSE responses.
+
 - New ledger entries use format version 2 with hashed optional revision, operator and approval references; historical version 1 entries remain unchanged and unknown versions fail verification. Full-chain verification preserves version ordering across pages and the console labels format errors.
 
 - PostgreSQL startup uses transactional numbered migrations under an advisory lock, adopts databases already complete at the 0.3.0 schema without replaying application DDL, and refuses newer schema versions.
