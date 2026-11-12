@@ -1,6 +1,7 @@
 // Human-only live check. Never included in the automated test suite.
 import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
+import { waitUntil } from "./wait.mjs";
 
 if (process.env.CI !== undefined || process.env.GARDAGENT_VERIFY_ANTHROPIC !== "1") {
   console.log("SKIP: human opt-in required; CI is always refused.");
@@ -95,7 +96,12 @@ async function verify() {
       }
       const prompt = usage.input_tokens + (usage.cache_creation_input_tokens ?? 0) + (usage.cache_read_input_tokens ?? 0);
       const cost = Math.ceil(prompt * input + usage.output_tokens * output);
-      const rows = (await store.listLedger()).filter((row) => row.action === "messages");
+      total += cost;
+      // Stream completion can precede settlement and journaling. Wait for both.
+      const { rows, spent } = await waitUntil(async () => ({
+        rows: (await store.listLedger()).filter((row) => row.action === "messages"),
+        spent: await store.getSpent(agent.agent.id, day),
+      }), ({ rows, spent }) => rows.length >= (stream ? 2 : 1) && spent === total);
       assert.equal(rows.length, stream ? 2 : 1);
       const row = rows.at(-1);
       assert.equal(row.agentId, agent.agent.id);
@@ -104,10 +110,9 @@ async function verify() {
       assert.equal(row.promptTokens, prompt);
       assert.equal(row.completionTokens, usage.output_tokens);
       assert.equal(row.cost, cost);
-      total += cost;
       // Refuse an ambiguous midnight-spanning run; retry on a stable UTC day.
       assert.equal(budgetDay(), day);
-      assert.equal(await store.getSpent(agent.agent.id, day), total);
+      assert.equal(spent, total);
       console.log(`PASS: ${stream ? "streaming" : "non-streaming"}; usage and configured cost verified.`);
     }
   } finally {
