@@ -1,9 +1,8 @@
 # Mandate model (v1)
 
 Direction: every agent acts under a mandate, every mandate has limits, every action leaves a verifiable trace, and the
-party that delegates keeps its own proof. This document fixes what "mandate" means in Gardagent v1 and what the ledger
-records about it. It is a specification for M05; in 0.3.0 none of it exists beyond the agent record and the single
-admin token. The ledger fields it relies on are defined in [ledger-format.md](ledger-format.md), section 2.
+party that delegates keeps its own proof. This document defines the implemented mandate contract: named operators, immutable policy revisions and
+approval attribution. Migration 3 adopts existing agents without changing historical ledger hashes or spend. The ledger fields it relies on are defined in [ledger-format.md](ledger-format.md), section 2.
 
 ## 1. Vocabulary
 
@@ -28,7 +27,7 @@ admin token. The ledger fields it relies on are defined in [ledger-format.md](le
   itself or others more power than it has, and there is one root of trust to protect).
 - **Revocation** is a soft delete: a revoked token stops authenticating at once, and the operator row stays so that the
   ids found in old ledger rows still resolve to a label.
-- The ledger records the operator **id**, not the label (labels can be edited) and never the token.
+- The ledger records the operator **id**, not the label and never the token.
 - No SSO, no roles in v1: every operator may do everything the 0.3.0 admin token could do, except managing operators.
 
 **Limit, stated plainly.** An operator token proves possession of the token. It does not prove the identity of a human:
@@ -51,7 +50,8 @@ A policy revision is created every time an agent is created or its policy change
   The three lists are sorted and de-duplicated before hashing, so that reordering a list is not a new revision. The
   agent's name and key are not part of the policy. The classification of MCP tools as read or write is part of the MCP
   server configuration (`GARDAGENT_MCP_SERVERS`), not of the agent, and is therefore **not** covered by the revision;
-  this is a known limit.
+  this is a known limit. The global observe/enforce mode is deployment configuration, not an agent field, and
+  is also outside the revision.
 - **Identifier.** `policyRev` is the lowercase hex SHA-256 of that canonical JSON. Equal policies have equal ids, across
   agents and across time. The id is a content hash, so it can be recomputed from the snapshot by anyone.
 - **Immutable store.** The snapshot is stored once under its id in an append-only table (it cannot be updated or
@@ -94,3 +94,29 @@ label says.
 No SSO or external identity provider, no roles or per-agent scopes for operators, no policy approval workflow (a policy
 change takes effect immediately), no signing of ledger rows with operator keys. Each of these is a possible later
 addition and none is prepared by the v1 design beyond the fields above.
+
+## 6. Administration API
+
+All routes require `Authorization: Bearer <operator-token>` (bootstrap also works).
+
+| Method and path | Result |
+| --- | --- |
+| `POST /admin/operators` | Bootstrap only. Body `{ "label": "alice-laptop" }` (1–200 trimmed characters). Returns 201 with `{ "operator", "token" }` and `Cache-Control: no-store`; keep the token immediately because it is never returned again. |
+| `GET /admin/operators` | Lists named operators, including revoked ones, with `id`, `label`, `createdAt`, `revokedAt`. No token or hash is returned. Bootstrap is configured outside this table. |
+| `POST /admin/operators/:id/revoke` | Bootstrap only. Returns `{ "revoked": true }` or 404 for an absent or already-revoked id. Bootstrap cannot be revoked here. |
+| `GET /admin/policy-revisions/:id` | Returns `{ "id", "policy" }` or 404. Recompute the identifier from canonical JSON to verify the snapshot. |
+
+Named operators can decide approvals and administer agents, but cannot create or revoke operators (403). Unknown or
+revoked credentials return 401. Revocation takes effect on subsequent authentication, not on requests already
+authenticated. Store one token per operator and revoke it when it is no longer needed. Labels are fixed for v1; no label
+editing endpoint exists.
+
+Agent API responses add `policyRev`. Approval responses add `policyRev` and, once an operator decision is recorded,
+`operatorId`. Historical approvals can lack both fields: migration cannot reconstruct their admission policy or
+who decided them. Newly admitted approvals keep their revision even if the live policy changes while waiting. Approval
+creation, decisions (including expiration), agent policy mutations and operator mutations commit together with their
+respective ledger evidence. A repeated decision returns 409 without another ledger row.
+
+Budget reservations also retain the admission revision so that an interrupted call can be attributed after restart.
+Historical reservations can lack a revision. During the existing observe/fail-open outage behavior, the cached policy
+snapshot supplies the revision; its immutable snapshot was persisted when that policy was stored.

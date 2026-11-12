@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
-import { canonicalJson, sha256, summarizeArgs, toolAllowed, toolMatches, toolNameMatches, type Approval, type Store, type ToolAccessClass } from "@gardagent/core";
-import { DECIDED, REQUESTED, type ApprovalHub } from "./approvals.js";
+import { policyRevision, canonicalJson, sha256, summarizeArgs, toolAllowed, toolMatches, toolNameMatches, type Approval, type Store, type ToolAccessClass } from "@gardagent/core";
+import { REQUESTED, type ApprovalHub } from "./approvals.js";
 import type { GatewayConfig } from "./config.js";
 import { AGENT_UNVERIFIABLE_CODE, AGENT_UNVERIFIABLE_MESSAGE, AgentUnverifiableError, bearer, createGovernance } from "./shared.js";
 import { SseSplitter } from "./sse.js";
@@ -62,7 +62,7 @@ export function registerMcp(app: FastifyInstance, deps: McpDeps): void {
 
     // Only the tools/call method is governed; the rest passes untraced in the ledger.
     let tool: string | null = null;
-    let ctxBase: { agentId: string; action: string; model: string; requestHash: string } | null = null;
+    let ctxBase: { agentId: string; action: string; model: string; requestHash: string; policyRev: string; approvalRef?: string } | null = null;
     let toolArgs: unknown;
     let observedReason: string | null = null;
     let accessClass: ToolAccessClass = "write";
@@ -77,6 +77,7 @@ export function registerMcp(app: FastifyInstance, deps: McpDeps): void {
       ctxBase = {
         agentId: agent.id,
         action: ACTION,
+        policyRev: policyRevision(agent).id,
         model: `${serverName}/${tool}`,
         // Fingerprint of the arguments: never the arguments themselves in the ledger.
         requestHash: sha256(canonicalJson(params.arguments ?? {})),
@@ -129,8 +130,11 @@ export function registerMcp(app: FastifyInstance, deps: McpDeps): void {
       reply.raw.on("close", () => {
         if (!reply.raw.writableFinished) closed.abort();
       });
+      const approvalId = randomUUID();
+      ctxBase.approvalRef = approvalId;
       const approval: Approval = {
-        id: randomUUID(),
+        policyRev: ctxBase.policyRev,
+        id: approvalId,
         createdAt: new Date().toISOString(),
         agentId: agent.id,
         server: serverName,
@@ -144,22 +148,17 @@ export function registerMcp(app: FastifyInstance, deps: McpDeps): void {
       };
       const zero = { upstreamStatus: null, promptTokens: 0, completionTokens: 0, cost: 0, responseHash: null };
       try {
-        await deps.store.createApproval(approval);
+        await deps.store.createApproval(approval, { ts: approval.createdAt, ...ctxBase, model: `${ctxBase.model}#${accessClass}`, ...zero, action: REQUESTED, verdict: "allowed", reason: null });
       } catch (error) {
         request.log.error({ err: error }, "Approval request creation failed");
         return reply.code(500).send(rpcError(id, -32603, "Approval request failed."));
       }
-      await gov.record({ ...ctxBase, model: `${ctxBase.model}#${accessClass}`, ...zero, action: REQUESTED, verdict: "allowed", reason: null });
       let final: Approval;
       try {
         final = await deps.approvals.wait(approval.id, config.approvalTimeoutMs, closed.signal);
       } catch (error) {
         request.log.error({ err: error }, "Approval wait interrupted");
         return reply.code(500).send(rpcError(id, -32603, "Approval wait failed."));
-      }
-      // Approval and rejection are logged by the admin route; expiration is logged here.
-      if (final.status === "expired") {
-        await gov.record({ ...ctxBase, model: `${ctxBase.model}#${accessClass}`, ...zero, action: DECIDED, verdict: "denied", reason: "expired" });
       }
       if (final.status !== "approved") {
         const message = final.status === "rejected" ? "Action rejected by a human" : "Approval timeout exceeded";

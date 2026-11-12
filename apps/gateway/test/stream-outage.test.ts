@@ -42,6 +42,10 @@ class FrozenStore extends MemoryStore {
   override releaseReservation(id: string) {
     return this.gate("release", () => super.releaseReservation(id));
   }
+  override createAgent(...args: Parameters<MemoryStore["createAgent"]>) {
+    // Audited creation appends inside the atomic operation, bypassing public appendLedger.
+    return args[1] ? this.gate("append", () => super.createAgent(...args)) : super.createAgent(...args);
+  }
   override appendLedger(input: LedgerInput, options?: { signal?: AbortSignal }): Promise<LedgerEntry> {
     this.appendSignals.push(options?.signal);
     return this.gate("append", () => super.appendLedger(input));
@@ -119,6 +123,8 @@ describe.each([["fail-open" as Policy], ["fail-closed" as Policy]])("stream in f
         store.frozen = true;
       };
       const { key } = await createAgent(app, agentBody);
+      expect(store.calls.append).toBe(1);
+      expect(await store.listLedger()).toMatchObject([{ action: "admin.agent.create" }]);
       const started = Date.now();
       const res = kind === "openai" ? await postOpenAi(app, key, { ...chat, stream: true }) : await postAnthropic(app, key, { ...anthropicBody, stream: true });
       const elapsed = Date.now() - started;

@@ -2,7 +2,7 @@ import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import fastifyStatic from "@fastify/static";
 import { Transform } from "node:stream";
-import Fastify, { type FastifyInstance } from "fastify";
+import Fastify, { type FastifyInstance, type FastifyServerOptions } from "fastify";
 import { looksLikeAgentKey, type Store } from "@gardagent/core";
 import { AuthFailureLimiter, authSummaryRow, UNAUTHENTICATED_BODY_LIMIT } from "./auth-limiter.js";
 import { DEFAULT_AUTH_FAIL_LIMIT, DEFAULT_AUTH_FAIL_WINDOW_MS } from "./config.js";
@@ -18,7 +18,7 @@ export interface AppDeps {
   config: GatewayConfig;
   store: Store;
   fetch?: typeof fetch;
-  logger?: boolean;
+  logger?: FastifyServerOptions["logger"];
   /**
    * Directory of the built console (the one containing index.html), served under /console/.
    * Default: the GARDAGENT_CONSOLE_DIR environment variable. Pass null to disable.
@@ -43,7 +43,10 @@ function tooLarge(limit: number): Error & { statusCode: number } {
 
 export function buildApp(deps: AppDeps): FastifyInstance {
   const app = Fastify({
-    logger: deps.logger ?? false,
+    logger: deps.logger ? {
+      ...(typeof deps.logger === "object" ? deps.logger : {}),
+      redact: ["req.headers.authorization", "req.headers.cookie", 'req.headers["x-api-key"]', 'res.headers["set-cookie"]'],
+    } : false,
     bodyLimit: 10 * 1024 * 1024,
     // Source address for the failure limiter: X-Forwarded-For is honored only as configured (GARDAGENT_TRUST_PROXY).
     trustProxy: deps.config.trustProxy ?? false,

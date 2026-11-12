@@ -14,6 +14,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- Named, revocable operator tokens (shown once), immutable policy revisions captured at admission, operator-attributed administration and approval decisions, correlated approval ledger rows, and bilingual mandate metadata in the console. Migration 3 preserves historical ledger hashes and spend.
+
 - Contracts for v1: `docs/compatibility.md` (what is stable and what compatible means), `docs/ledger-format.md` (ledger format version 1 as written by 0.3.0, and the version 2 specification), `docs/mandate.md` (operators, policy revisions, approvals) and `docs/mcp-matrix.md` (target governance of every MCP message). Documentation only: no behaviour change.
 - Golden fixtures under `test/fixtures/contracts/` (ledger entries and API samples produced by the real code) and a contract test that fails if a version 1 ledger entry no longer verifies.
 

@@ -1,6 +1,13 @@
 /** Amounts in micro-dollars (1 USD = 1,000,000) so we stay in integers. */
 export type MicroUsd = number;
 
+export interface Operator {
+  id: string;
+  label: string;
+  createdAt: string;
+  revokedAt: string | null;
+}
+
 export interface Agent {
   id: string;
   name: string;
@@ -64,6 +71,7 @@ export interface LedgerSettlement {
 
 /** What a reservation remembers about its call, so that an orphaned one can still leave a ledger row. */
 export interface ReservationMeta {
+  policyRev?: string;
   action: string;
   model: string | null;
   requestHash: string | null;
@@ -170,6 +178,8 @@ export type ApprovalStatus = "pending" | "approved" | "rejected" | "expired";
  * readable trace of the arguments: it lives in this table and never goes into the ledger.
  */
 export interface Approval {
+  policyRev?: string;
+  operatorId?: string;
   id: string;
   createdAt: string;
   agentId: string;
@@ -185,13 +195,18 @@ export interface Approval {
 }
 
 export interface Store {
+  createOperator(operator: Operator, tokenHash: string, audit: LedgerInput): Promise<void>;
+  listOperators(): Promise<Operator[]>;
+  findOperator(tokenHash: string): Promise<Operator | null>;
+  revokeOperator(id: string, at: string, audit: LedgerInput): Promise<boolean>;
+  getPolicyRevision(id: string): Promise<string | null>;
   /** Cheap availability probe (SELECT 1); rejects when the database is unreachable. Optional: absent for in-memory. */
   ping?(): Promise<void>;
   findAgentByKeyHash(keyHash: string): Promise<Agent | null>;
-  createAgent(agent: Agent): Promise<void>;
+  createAgent(agent: Agent, audit?: LedgerInput): Promise<void>;
   getAgent(id: string): Promise<Agent | null>;
   /** Applies the supplied fields; returns the updated agent, or null if it does not exist. */
-  updateAgent(id: string, patch: AgentPatch): Promise<Agent | null>;
+  updateAgent(id: string, patch: AgentPatch, audit?: LedgerInput): Promise<Agent | null>;
   /**
    * Replaces the stored key hash of an agent (same id, policy and history); returns the updated agent, or null if it
    * does not exist. Throws KeyHashCollisionError when another agent already has this hash.
@@ -240,10 +255,10 @@ export interface Store {
   reconcileSpend(day: string): Promise<SpendDivergence[]>;
   /** Distinct agent ids and models present in the ledger, sorted. */
   ledgerFacets(): Promise<LedgerFacets>;
-  createApproval(approval: Approval): Promise<void>;
+  createApproval(approval: Approval, audit?: LedgerInput): Promise<void>;
   getApproval(id: string): Promise<Approval | null>;
   /** Decides a request still pending; returns null if it does not exist or is no longer pending. */
-  decideApproval(id: string, status: Exclude<ApprovalStatus, "pending">, reason: string | null, decidedAt: string): Promise<Approval | null>;
+  decideApproval(id: string, status: Exclude<ApprovalStatus, "pending">, reason: string | null, decidedAt: string, operatorId?: string, audit?: LedgerInput): Promise<Approval | null>;
   /** Most recent requests first, filtered by status when provided. */
   listApprovals(options?: { status?: ApprovalStatus; limit?: number }): Promise<Approval[]>;
 }

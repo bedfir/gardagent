@@ -199,6 +199,26 @@ function readFixture<T>(file: string): T {
   return JSON.parse(readFileSync(`${DIR}${file}`, "utf-8")) as T;
 }
 
+/** M05 extends the historical API samples; keep the v1 proof fixture byte-for-byte intact. */
+function withMandateFields(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(withMandateFields);
+  if (value === null || typeof value !== "object") return value;
+  const row = value as Record<string, unknown>;
+  const next = Object.fromEntries(Object.entries(row).map(([k, v]) => [k, withMandateFields(v)]));
+  if ("allowedModels" in row && "dailyBudgetUsd" in row) next.policyRev = "content-hash";
+  if ("argsHash" in row && "status" in row) {
+    next.policyRev = "content-hash";
+    if (row.status === "approved" || row.status === "rejected") next.operatorId = "bootstrap";
+  }
+  if ("seq" in row && "hash" in row) {
+    const action = String(row.action);
+    if (row.agentId && (action !== "admin.agent.rotate-key") && row.degraded !== true) next.policyRev = "content-hash";
+    if (action.startsWith("admin.") || action === "mcp.approval.decided") next.operatorId = "bootstrap";
+    if (action.startsWith("mcp.approval.") || action === "mcp.tools/call") next.approvalRef = "approval-id";
+  }
+  return next;
+}
+
 /** Structure of a JSON value: keys and primitive types, not values (lists by their first element). */
 function shape(value: unknown): unknown {
   if (value === null) return "null";
@@ -349,17 +369,17 @@ describe("contract: HTTP API samples", () => {
         route: expected.route,
         status: expected.status,
       });
-      expect({ sample, shape: shape(actual.response) }).toEqual({ sample, shape: shape(expected.response) });
+      expect({ sample, shape: shape(actual.response) }).toEqual({ sample, shape: shape(withMandateFields(expected.response)) });
       if (expected.status >= 400) {
         expect({ sample, errors: errorValues(actual.response) }).toEqual({ sample, errors: errorValues(expected.response) });
       }
     }
   });
 
-  it("the live ledger adds version 2 to the historical shape", () => {
+  it("the live ledger adds version 2 and admission revision to the historical shape", () => {
     expect(live.ledger.entries.every((entry) => entry.formatVersion === 2)).toBe(true);
     expect(shape(live.ledger.entries.find((e) => e.action === "chat.completions"))).toEqual(
-      shape(ledger.entries.find((e) => e.action === "chat.completions" && e.degraded === undefined)),
+      shape(withMandateFields(ledger.entries.find((e) => e.action === "chat.completions" && e.degraded === undefined))),
     );
   });
 

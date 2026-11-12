@@ -2,6 +2,8 @@ import type { Messages } from "./fr";
 
 /** English dictionary: must define exactly the keys of fr.ts (enforced by the Messages type). */
 export const en: Messages = {
+  "col.operator": "Operator",
+  "col.policyRev": "Policy revision",
   "app.title": "Gardagent console",
 
   "nav.label": "Sections",

@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import {
+  policyRevision,
   budgetDay,
   canonicalJson,
   computeCost,
@@ -66,7 +67,7 @@ export interface CallContext {
   day: string;
   /** Budget reservation held for this call (null when the budget is unlimited). */
   reservationId: string | null;
-  base: { agentId: string; action: string; model: string; requestHash: string };
+  base: { agentId: string; action: string; model: string; requestHash: string; policyRev?: string };
   /** Worst-case cost estimated at admission; recorded when an aborted call has no usage. */
   estimatedCost: number;
   /** In observe mode, the policy reason that would have denied the request. */
@@ -227,7 +228,7 @@ export function createGovernance(app: FastifyInstance, deps: { config: GatewayCo
       day,
       reservationId: null,
       estimatedCost: estimateCost(config, model, body),
-      base: { agentId: agent.id, action, model, requestHash: sha256(canonicalJson(body)) },
+      base: { agentId: agent.id, action, model, requestHash: sha256(canonicalJson(body)), policyRev: policyRevision(agent).id },
     };
     // Fail-open (observe only): without the database, spend is unknown and no reservation is taken; the
     // spooled row carries the cost and the day so that a later settlement can account for it.
@@ -246,7 +247,7 @@ export function createGovernance(app: FastifyInstance, deps: { config: GatewayCo
     if (decision.allowed && agent.dailyBudget > 0 && !ctx.degraded) {
       const estimate = ctx.estimatedCost;
       try {
-        ctx.reservationId = await bounded(store.reserve(agent.id, day, estimate, agent.dailyBudget, reservationTtlMs, { action, model, requestHash: ctx.base.requestHash }));
+        ctx.reservationId = await bounded(store.reserve(agent.id, day, estimate, agent.dailyBudget, reservationTtlMs, { action, model, requestHash: ctx.base.requestHash, policyRev: ctx.base.policyRev }));
       } catch (error) {
         if (!(await outageTolerated(error))) throw error;
         ctx.degraded = true;

@@ -27,7 +27,7 @@ describe.skipIf(!url)("PgStore (PostgreSQL integration)", () => {
 
   beforeAll(async () => {
     pool = new pg.Pool({ connectionString: url });
-    await pool.query("DROP TABLE IF EXISTS schema_migrations, approvals, agent_reservations, ledger_idempotency, spend_settlements, agent_spend, ledger, agents CASCADE");
+    await pool.query("DROP TABLE IF EXISTS schema_migrations, operators, policy_revisions, approvals, agent_reservations, ledger_idempotency, spend_settlements, agent_spend, ledger, agents CASCADE");
     store = new PgStore(pool);
     await store.migrate();
   });
