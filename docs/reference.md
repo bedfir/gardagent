@@ -132,6 +132,8 @@ The console is served only if the built folder exists (variable `GARDAGENT_CONSO
 
 The console is available in French and English. The `FR | EN` switch in the header (and on the login screen) changes the language at once and the choice is kept in the browser (`localStorage`, key `gardagent.console.locale`). Without a saved choice, the browser language decides: French if it starts with `fr` or is missing, English otherwise. Texts come from `apps/console/src/i18n/fr.ts` and `en.ts`, which must have the same keys (checked by `vue-tsc` and by a test); data returned by the gateway (agent names, models, ledger values) is never translated. To add a string, add the key to `fr.ts` first, then to `en.ts`.
 
+The Chromium browser suite covers login and wrong-token refusal, agent listing and creation, approval and rejection, ledger filters, integrity verification results, and French/English switching against the built console served by a real gateway with an in-memory store. Run it with `pnpm test:e2e`; see [browser test coverage](../e2e/README.md) for setup and limits.
+
 Development, with a gateway running on port 8080 (Vite proxies `/admin` to it):
 
 ```bash
