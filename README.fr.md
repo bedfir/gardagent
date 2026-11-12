@@ -22,7 +22,7 @@ en anglais dans [docs/](docs/README.md).
 - **un journal chaîné en ajout seul** : chaque action est enregistrée avec des empreintes SHA-256 (pas le contenu), la base
   refuse toute modification ou suppression, et un point d'accès vérifie toute la chaîne ;
 - **les modes `observe` et `enforce`** : mesurer ce que les règles bloqueraient avant de bloquer ;
-- **compatibilité OpenAI et Anthropic** (`POST /v1/chat/completions`, `POST /v1/messages`, streaming compris) et **proxy MCP**
+- **compatibilité OpenAI et format Anthropic, pas encore vérifié auprès du fournisseur** ([vérification](tools/anthropic/README.md)) (`POST /v1/chat/completions`, `POST /v1/messages`, streaming compris) et **proxy MCP**
   (outils `tools/call`) ;
 - une API d'administration et une console web (français et anglais).
 

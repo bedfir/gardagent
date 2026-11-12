@@ -1,7 +1,7 @@
 import { budgetDay } from "@gardagent/core";
 import { describe, expect, it } from "vitest";
 import { loadConfig } from "../src/config.js";
-import { config, createAgent, jsonResponse, proxyLedger, setup, sseResponse, waitForLedger } from "./helpers.js";
+import { config, createAgent, jsonResponse, proxyLedger, setup, sseResponse, setupWith, waitForLedger } from "./helpers.js";
 
 const message = {
   id: "msg_1",
@@ -254,4 +254,43 @@ describe("Anthropic provider configuration", () => {
     const urlOnly = loadConfig({ ...base, ANTHROPIC_UPSTREAM_BASE_URL: "https://ant.test" });
     expect(urlOnly).toMatchObject({ anthropicUpstreamBaseUrl: "https://ant.test", anthropicUpstreamApiKey: "k-openai" });
   });
+});
+
+// Hand-built public Messages API shapes; no provider responses or private data.
+describe("messages: configured cost arithmetic", () => {
+  const fixtures = [
+    { name: "input only rounds up", usage: { input_tokens: 1, output_tokens: 0 }, prompt: 1, output: 0, cost: 1 },
+    { name: "output only rounds up", usage: { input_tokens: 0, output_tokens: 1 }, prompt: 0, output: 1, cost: 2 },
+    { name: "cache creation uses input rate", usage: { input_tokens: 0, output_tokens: 0, cache_creation_input_tokens: 3 }, prompt: 3, output: 0, cost: 1 },
+    { name: "cache read uses input rate", usage: { input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 5 }, prompt: 5, output: 0, cost: 2 },
+    { name: "rounds the combined amount once", usage: { input_tokens: 1, output_tokens: 1 }, prompt: 1, output: 1, cost: 2 },
+    { name: "ignores nested breakdowns and unrelated fields", usage: {
+      input_tokens: 1, output_tokens: 1, cache_creation_input_tokens: 3, cache_read_input_tokens: 5,
+      cache_creation: { ephemeral_5m_input_tokens: 3, ephemeral_1h_input_tokens: 0 },
+      server_tool_use: { web_search_requests: 9 }, service_tier: "standard",
+    }, prompt: 9, output: 1, cost: 4 },
+  ];
+  for (const stream of [false, true]) {
+    it.each(fixtures)(`$name (stream=${stream})`, async ({ usage, prompt, output, cost }) => {
+      const start = { ...usage, output_tokens: 0 };
+      const full = [
+        { type: "message_start", message: { ...message, usage: start } },
+        { type: "message_delta", delta: { stop_reason: null }, usage: { output_tokens: 8 } },
+        { type: "message_delta", delta: { stop_reason: "end_turn" }, usage: { output_tokens: usage.output_tokens } },
+        { type: "message_stop" },
+      ].map((event) => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`).join("");
+      const { app, store } = setupWith({ prices: { "gpt-4o-mini": { input: 0.25, output: 1.5 } } },
+        () => stream ? sseResponse([full]) : jsonResponse({ ...message, usage }));
+      const { agent, key } = await createAgent(app);
+      const day = budgetDay();
+      const response = await post(app, { "x-api-key": key }, req("gpt-4o-mini", { stream }));
+      expect(response.statusCode).toBe(200);
+      if (stream) expect(response.body).toBe(full);
+      else expect(response.json()).toEqual({ ...message, usage });
+      const [row] = await waitForLedger(store, 1);
+      expect(row).toMatchObject({ promptTokens: prompt, completionTokens: output, cost });
+      expect(await store.getSpent(agent.id, day)).toBe(cost);
+      await app.close();
+    });
+  }
 });

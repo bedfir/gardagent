@@ -23,7 +23,7 @@ configuration; the agent's code does not change.
 - **Append-only, hash-chained ledger**: every action is recorded with SHA-256 fingerprints (not content); the database
   rejects updates and deletes, and an endpoint verifies the whole chain.
 - **`observe` and `enforce` modes**: measure what the rules would block before blocking it.
-- **OpenAI and Anthropic compatibility**: `POST /v1/chat/completions` and `POST /v1/messages`, streaming included.
+- **OpenAI compatibility** and **Anthropic format-compatible, not yet verified against the provider** ([verification](tools/anthropic/README.md)): `POST /v1/chat/completions` and `POST /v1/messages`, streaming included.
 - **MCP proxy**: governs `tools/call` on Streamable HTTP MCP servers, without exposing their credentials to agents.
 - **Admin API and console** (Vue 3, French and English): agents, spend, ledger browsing and filtering, CSV export, integrity check.
 

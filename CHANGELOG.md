@@ -16,6 +16,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- Human-only, opt-in Anthropic verification harness and synthetic usage/cost tests for both response modes; cache counts use the configured input rate. Provider verification remains pending.
+
 - Optional per-agent rolling-minute and concurrency limits shared by model and MCP endpoints, with journaled refusals before budget reservation and Retry-After hints. Counters are process-local and reset on restart.
 
 - Standalone offline ledger verifier with independent hashing, complete M06 export validation, external checkpoint comparisons, and text or JSON output.
@@ -114,7 +116,7 @@ Sections for 0.2.0 (2026-10-22), 0.2.1 (2026-10-22) and 0.2.2 were never written
 ### Added
 
 - OpenAI-compatible proxy endpoint (`POST /v1/chat/completions`) with streaming support.
-- Anthropic-compatible proxy endpoint (`POST /v1/messages`) with streaming support.
+- Anthropic-format proxy endpoint (format-compatible, not yet verified against the provider) (`POST /v1/messages`) with streaming support.
 - Per-agent `ga_…` keys; the real provider key stays inside the gateway.
 - Per-agent model allow-lists.
 - Atomic daily budget reservation and settlement.
