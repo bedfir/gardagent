@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-11-12
+
 ### Breaking changes
 
 - MCP non-tool pass-through is replaced by explicit governance. In enforce mode unsupported methods and server requests are refused without forwarding; initialization, listings and declared notifications are governed and journaled, ping is handled locally, and listings/capabilities are filtered. GET/DELETE and batches are refused. Observe mode records policy violations while relaying them; malformed framing remains refused. See [the matrix](docs/mcp-matrix.md).
