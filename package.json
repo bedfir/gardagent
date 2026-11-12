@@ -19,6 +19,7 @@
     "report": "pnpm --filter @gardagent/report start --"
   },
   "devDependencies": {
+    "@playwright/test": "1.56.1",
     "@types/node": "^22.10.0",
     "@vitejs/plugin-vue": "^5.2.4",
     "@vue/test-utils": "^2.5.1",
