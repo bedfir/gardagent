@@ -4,8 +4,11 @@ import { policyRevision, canonicalJson, sha256, summarizeArgs, toolAllowed, tool
 import { REQUESTED, type ApprovalHub } from "./approvals.js";
 import type { GatewayConfig } from "./config.js";
 import { AGENT_UNVERIFIABLE_CODE, AGENT_UNVERIFIABLE_MESSAGE, AgentUnverifiableError, bearer, createGovernance } from "./shared.js";
-import { SseSplitter } from "./sse.js";
+import { SseSplitter, parseSseData } from "./sse.js";
 
+export const MCP_REQUESTS = ["initialize", "ping", "tools/list", "tools/call"] as const;
+export const MCP_NOTIFICATIONS = ["notifications/initialized", "notifications/cancelled"] as const;
+export const MCP_SERVER_NOTIFICATIONS = ["notifications/progress", "notifications/message", "notifications/cancelled", "notifications/tools/list_changed", "notifications/prompts/list_changed", "notifications/resources/list_changed", "notifications/resources/updated"] as const;
 const ACTION = "mcp.tools/call";
 /** MCP headers relayed in both directions. */
 const SESSION = "mcp-session-id";
@@ -31,10 +34,13 @@ function header(request: FastifyRequest, name: string): string | undefined {
   return (Array.isArray(v) ? v[0] : v) || undefined;
 }
 
-/** MCP proxy (Streamable HTTP transport): only tools/call is governed and logged. */
+/** MCP proxy with explicit admission and default refusal. */
 export function registerMcp(app: FastifyInstance, deps: McpDeps): void {
   const { config } = deps;
   const gov = createGovernance(app, deps);
+
+  app.route({ method: ["GET", "DELETE"], url: "/mcp/:server", handler: async (_request, reply) =>
+    reply.header("allow", "POST").code(405).send(rpcError(null, -32000, "Only POST is supported.")) });
 
   app.post("/mcp/:server", async (request, reply) => {
     const { server: serverName } = request.params as { server: string };
@@ -60,15 +66,49 @@ export function registerMcp(app: FastifyInstance, deps: McpDeps): void {
     }
     const id: Id = typeof msg.id === "string" || typeof msg.id === "number" ? msg.id : null;
 
-    // Only the tools/call method is governed; the rest passes untraced in the ledger.
-    let tool: string | null = null;
-    let ctxBase: { agentId: string; action: string; model: string; requestHash: string; policyRev: string; approvalRef?: string } | null = null;
-    let toolArgs: unknown;
+    const notification = !Object.hasOwn(msg, "id");
+    const zero = { upstreamStatus: null, promptTokens: 0, completionTokens: 0, cost: 0, responseHash: null };
+    const base = {
+      agentId: agent.id, action: `mcp.${String(msg.method ?? "client_response").slice(0, 100)}`,
+      model: `${serverName}/-`, policyRev: policyRevision(agent).id,
+      requestHash: sha256(canonicalJson(msg.params ?? {})),
+    };
+    const journal = async (reason: string | null, denied = false) => gov.record({
+      ...base, ...zero, verdict: denied ? "denied" : "allowed", reason,
+    });
+    const objectParams = msg.params === undefined || (msg.params !== null && typeof msg.params === "object" && !Array.isArray(msg.params));
+    if (typeof msg.method !== "string" || !msg.method || (!notification && msg.id !== null && typeof msg.id !== "string" && typeof msg.id !== "number") || !objectParams) {
+      await journal("mcp_client_response_refused", true);
+      return reply.code(400).send(rpcError(id, -32600, "Invalid JSON-RPC request."));
+    }
+    const declared = notification
+      ? (MCP_NOTIFICATIONS as readonly string[]).includes(msg.method)
+      : (MCP_REQUESTS as readonly string[]).includes(msg.method);
     let observedReason: string | null = null;
+    if (!declared) {
+      if (config.mode !== "observe") {
+        await journal("method_not_governed", true);
+        return notification ? reply.code(202).send() : reply.send(rpcError(id, -32601, "Method not governed."));
+      }
+      observedReason = "observed:method_not_governed";
+    }
+    if (notification && msg.method === "notifications/cancelled" &&
+        !["string", "number"].includes(typeof (msg.params as Record<string, unknown> | undefined)?.requestId)) {
+      await journal("invalid_params", true);
+      return reply.code(202).send();
+    }
+    if (!notification && msg.method === "ping") {
+      await journal(null);
+      return reply.send({ jsonrpc: "2.0", id, result: {} });
+    }
+    let tool: string | null = null;
+    let ctxBase: { agentId: string; action: string; model: string; requestHash: string; policyRev: string; approvalRef?: string } = base;
+    let toolArgs: unknown;
     let accessClass: ToolAccessClass = "write";
-    if (msg.method === "tools/call") {
+    if (!notification && msg.method === "tools/call") {
       const params = (msg.params ?? {}) as { name?: unknown; arguments?: unknown };
       if (typeof params.name !== "string" || !params.name) {
+        await journal("invalid_params", true);
         return reply.code(200).send(rpcError(id, -32602, "The « name » parameter of tools/call is required."));
       }
       tool = params.name;
@@ -184,10 +224,9 @@ export function registerMcp(app: FastifyInstance, deps: McpDeps): void {
     const call = gov.startCall(reply);
     const record = async (reason: string | null, status: number | null, text: string) => {
       call.done();
-      if (!ctxBase) return;
       await gov.record({
         ...ctxBase,
-        model: `${ctxBase.model}#${accessClass}`,
+        model: tool ? `${ctxBase.model}#${accessClass}` : ctxBase.model,
         verdict: "allowed",
         reason: observedReason ?? reason,
         upstreamStatus: status,
@@ -207,6 +246,58 @@ export function registerMcp(app: FastifyInstance, deps: McpDeps): void {
       return reply.code(502).send(rpcError(id, -32000, `MCP server "${serverName}" is unreachable.`));
     }
 
+    const admittedAgent = agent;
+    let responseReason: string | null = null;
+    // Every upstream message is classified before any bytes reach the client.
+    const screen = async (message: Record<string, unknown>): Promise<Record<string, unknown> | null> => {
+      if (message.jsonrpc !== "2.0") {
+        responseReason = "invalid_upstream_message";
+        return null;
+      }
+      if (typeof message.method === "string") {
+        const allowed = !Object.hasOwn(message, "id") && (MCP_SERVER_NOTIFICATIONS as readonly string[]).includes(message.method);
+        if (!allowed) {
+          await gov.record({ ...base, ...zero, action: `mcp.${message.method.slice(0, 100)}`,
+            requestHash: sha256(canonicalJson(message.params ?? {})),
+            verdict: config.mode === "observe" ? "allowed" : "denied",
+            reason: `${config.mode === "observe" ? "observed:" : ""}server_request_refused` });
+          if (config.mode !== "observe") return null;
+        }
+        return message;
+      }
+      if (message.id !== id || !("result" in message || "error" in message)) {
+        responseReason = "invalid_upstream_message";
+        return null;
+      }
+      if (msg.method === "initialize" && message.result && typeof message.result === "object") {
+        const result = message.result as Record<string, unknown>;
+        if (result.capabilities && typeof result.capabilities === "object") {
+          const capabilities = result.capabilities as Record<string, unknown>;
+          const filtered = Object.fromEntries(Object.entries(capabilities).filter(([name]) => name === "tools"));
+          if (Object.keys(filtered).length !== Object.keys(capabilities).length) {
+            if (config.mode === "observe") observedReason = "observed:method_not_governed";
+            else return { ...message, result: { ...result, capabilities: filtered } };
+          }
+        }
+      }
+      if (msg.method === "tools/list" && message.result && typeof message.result === "object") {
+        const result = message.result as Record<string, unknown>;
+        if (Array.isArray(result.tools)) {
+          const filtered = result.tools.filter((item: unknown) => item !== null && typeof item === "object" && typeof (item as Record<string, unknown>).name === "string" && toolAllowed(admittedAgent, serverName, (item as { name: string }).name));
+          if (filtered.length !== result.tools.length) {
+            if (config.mode === "observe") observedReason = "observed:tool_not_allowed";
+            else return { ...message, result: { ...result, tools: filtered } };
+          }
+        }
+      }
+      return message;
+    };
+    const screenEvent = async (event: string): Promise<string> => {
+      const data = parseSseData(event);
+      if (!data) { responseReason = "invalid_upstream_message"; return ""; }
+      const screened = await screen(data);
+      return !screened ? "" : screened === data ? event : `event: message\ndata: ${JSON.stringify(screened)}\n\n`;
+    };
     const out: Record<string, string> = {};
     for (const name of [SESSION, PROTOCOL]) {
       const v = upstream.headers.get(name);
@@ -216,15 +307,29 @@ export function registerMcp(app: FastifyInstance, deps: McpDeps): void {
     const reason = upstream.ok ? null : "upstream_error";
 
     if (!(contentType ?? "").includes("text/event-stream") || !upstream.ok || !upstream.body) {
-      const text = await upstream.text();
-      await record(reason, upstream.status, text);
+      const raw = await upstream.text();
+      let text = raw;
+      if (raw) {
+        let parsed: unknown;
+        try { parsed = JSON.parse(raw); }
+        catch { responseReason = "invalid_upstream_message"; }
+        const screened = parsed && typeof parsed === "object" && !Array.isArray(parsed) ? await screen(parsed as Record<string, unknown>) : null;
+        if (!screened) responseReason ??= "invalid_upstream_message";
+        text = JSON.stringify(screened ?? rpcError(id, -32603, "Invalid or refused upstream message."));
+      }
+      await record(responseReason ?? reason, upstream.status, notification ? "" : text);
       reply.code(upstream.status).headers(out);
-      if (contentType) reply.header("content-type", contentType);
-      return reply.send(text);
+      reply.header("content-type", "application/json");
+      return notification ? reply.code(202).send() : reply.send(text);
     }
 
-    return relayStream(reply, upstream, out, call, async (streamReason, forwarded) =>
-      record(streamReason, upstream.status, forwarded),
+    if (notification) {
+      await upstream.body.cancel();
+      await record("unexpected_notification_stream", upstream.status, "");
+      return reply.code(202).send();
+    }
+    return relayStream(reply, upstream, out, call, screenEvent, async (streamReason, forwarded) =>
+      record(responseReason ?? streamReason, upstream.status, forwarded),
     );
   });
 
@@ -234,6 +339,7 @@ export function registerMcp(app: FastifyInstance, deps: McpDeps): void {
     upstream: Response,
     extra: Record<string, string>,
     call: { aborted: () => boolean },
+    screenEvent: (event: string) => Promise<string>,
     settle: (reason: string | null, forwarded: string) => Promise<void>,
   ) {
     reply.hijack();
@@ -247,21 +353,21 @@ export function registerMcp(app: FastifyInstance, deps: McpDeps): void {
     const decoder = new TextDecoder();
     let forwarded = "";
     let reason: string | null = null;
-    const forward = (events: string[]) => {
+    const forward = async (events: string[]) => {
       for (const event of events) {
-        forwarded += event;
-        reply.raw.write(event);
+        const safe = await screenEvent(event);
+        forwarded += safe;
+        reply.raw.write(safe);
       }
     };
     try {
       for await (const chunk of upstream.body as unknown as AsyncIterable<Uint8Array>) {
-        forward(splitter.push(decoder.decode(chunk, { stream: true })));
+        await forward(splitter.push(decoder.decode(chunk, { stream: true })));
       }
-      forward(splitter.push(decoder.decode()));
+      await forward(splitter.push(decoder.decode()));
       const rest = splitter.flush();
       if (rest) {
-        forwarded += rest;
-        reply.raw.write(rest);
+        await forward([rest]);
       }
     } catch {
       reason = call.aborted() ? "client_aborted" : "stream_interrupted";
