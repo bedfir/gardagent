@@ -1,3 +1,4 @@
+import { verifyExport } from "../../../packages/verify/src/index.js";
 import { randomUUID } from "node:crypto";
 import pg from "pg";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -57,7 +58,7 @@ for (const backend of ["memory", "postgres"] as const) {
       expect(response.statusCode).toBe(200);
       expect(response.headers["content-type"]).toContain("application/x-ndjson");
       const [metadata, ...entries] = response.body.trim().split("\n").map((line) => JSON.parse(line));
-      return { metadata, entries: entries as LedgerEntry[] };
+      return { metadata, entries: entries as LedgerEntry[], raw: response.body };
     };
     async function seed(count: number, offset = 0) {
       for (let n = 1; n <= count; n++) await writer.appendLedger(input(n + offset));
@@ -90,13 +91,16 @@ for (const backend of ["memory", "postgres"] as const) {
       expect(checkpoint.sequence).toBe(5);
       expect(checkpoint.head_hash).toBe(original[4]!.hash);
       const all = [...first.entries];
+      let exported = first.raw;
       let cursor = first.metadata.nextAfterSeq;
       while (cursor !== null) {
         const next = await page(`?limit=2&afterSeq=${cursor}&headSequence=${checkpoint.sequence}&headHash=${checkpoint.head_hash}`);
         all.push(...next.entries);
+        exported += next.raw;
         cursor = next.metadata.nextAfterSeq;
       }
       expect(all).toEqual(original);
+      expect(verifyExport(exported, [checkpoint])).toMatchObject({ valid: true, count: 5, head: { sequence: 5, hash: checkpoint.head_hash } });
       expect(verifyChain(all).valid).toBe(true);
       expect((await store.ledgerHead()).sequence).toBe(6);
       expect((await check(checkpoint)).json()).toMatchObject({ valid: true, checkpointContained: true });
@@ -106,6 +110,7 @@ for (const backend of ["memory", "postgres"] as const) {
       const empty = await page();
       expect(empty.metadata).toMatchObject({ checkpoint: { sequence: 0, head_hash: GENESIS_HASH }, nextAfterSeq: null });
       expect(empty.entries).toEqual([]);
+      expect(verifyExport(empty.raw).valid).toBe(true);
       await seed(4);
       const first = await page("?limit=2");
       const c = first.metadata.checkpoint;
