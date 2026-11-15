@@ -248,5 +248,5 @@ To report a vulnerability, see [SECURITY.md](SECURITY.md).
 Gardagent is young software. The test suite is extensive and the gateway has been exercised end to end on a test server
 with test traffic (reports in [docs/](docs/README.md)), but it has not been through production use or an independent
 security review. Interfaces and configuration may change between releases; read the [CHANGELOG](CHANGELOG.md) before
-upgrading; the [compatibility policy](docs/compatibility.md) applies from 1.0. The v1 tag remains a human action
-and requires independent users. Bug reports, questions and contributions are welcome.
+upgrading; the [compatibility policy](docs/compatibility.md) applies from 1.0, which has no date: see
+[versioning and the road to 1.0](docs/versioning.md) for what it requires. Bug reports, questions and contributions are welcome.

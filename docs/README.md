@@ -12,6 +12,7 @@ limitations.
 | [industrial-setup.md](industrial-setup.md) | Declaring MCP servers with read and write tools for plant and ERP-style environments, why writes need approval, and a safety notice (Gardagent is not a functional-safety system). |
 | [migration-timing.md](migration-timing.md) | Historical 0.3.0 measurements plus current locking limits, not measured versioned-migration performance. |
 | [upgrade-0.3-to-1.0.md](upgrade-0.3-to-1.0.md) | Upgrading from 0.3.0 to v1: backup, migrations, operators, MCP changes, limits and restore. |
+| [versioning.md](versioning.md) | What 0.x release numbers mean, what the next releases aim at and the evidence required before 1.0. |
 | [v1-readiness.md](v1-readiness.md) | Eleven exit criteria and human-only checks before a v1 release decision. |
 | [rate-limits.md](rate-limits.md) | Per-agent `requestsPerMinute` and `maxConcurrentRequests`, HTTP 429 behaviour and process-local limits. |
 | [verify.md](verify.md) | Offline ledger verification with the `@gardagent/verify` CLI, export preparation and what success proves. |
