@@ -2,7 +2,8 @@
 
 Evidence inventory, 2026-11-12. This is the local development branch, not a release
 announcement or an assertion that all exit criteria have passed. Package versions
-remain 0.3.0. Paths below identify implemented checks; their existence does not
+were 0.3.0 when this table was written; the current release is 0.4.1 (see the
+update below the table). Paths below identify implemented checks; their existence does not
 prove execution. No Node, pnpm, Docker, browser, provider or registry checks were
 run for M14. The runner must attach its final gate and reviewer results to this
 revision. Historical reports are evidence only for their stated builds.
@@ -20,6 +21,32 @@ revision. Historical reports are evidence only for their stated builds.
 | 9 | First run under ten minutes with local model/no provider key, authentication on; three runnable examples | Root [README](../README.md#local-quickstart), `docker-compose.local.yml`, [OpenAI](../examples/openai/README.md), [Anthropic](../examples/anthropic/README.md), [MCP approval](../examples/mcp/README.md); `apps/gateway/test/quickstart.test.ts` checks documented routes/configuration and example commands. | Under ten minutes remains an unmeasured target on a clean machine. CPU speed, build and downloads can exceed it. Anthropic example uses a synthetic fixture; local accounting rates are zero. Static drift tests do not establish successful Compose or SDK execution. |
 | 10 | Written API, ledger and schema compatibility policy with contract tests | [Compatibility policy](compatibility.md), `apps/gateway/test/contracts.test.ts`, immutable version 1 samples in `test/fixtures/contracts/`, `packages/core/test/ledger.test.ts` version 2 checks, `apps/gateway/test/migrations.test.ts` schema checks. | Policy applies from 1.0; current packages remain 0.3.0. Tests cover selected contracts, not every possible HTTP input. No separate version 2 golden fixture file exists; version 2 is exercised in generated test entries and mixed-chain tests. Final runner result pending. |
 | 11 | Signed images, SBOM, provenance and verification instructions | `.github/workflows/release.yml`: pinned actions, keyless signature over OCI index digest, BuildKit SPDX SBOM and SLSA provenance; [verification and first-release checklist](verify-release.md). | Statically inspected only. No publication, signature or registry evidence was exercised here. First tagged release must be checked by a human. Old images gain no evidence retroactively; builds are not bit-for-bit reproducible. |
+
+## Evidence update, 2026-11-15 (release 0.4.1)
+
+The table above is the 2026-11-12 inventory and is left as written. Since then:
+
+- **Criterion 11 (signed images, SBOM, provenance):** the first tagged release,
+  v0.4.1, was published and checked on a separate machine following
+  [verify-release.md](verify-release.md): keyless signature verified for the
+  `release.yml` identity at `refs/tags/v0.4.1`, one runnable `linux/amd64` manifest,
+  SLSA provenance naming this repository, tag and revision, and an SPDX 2.3 SBOM.
+  Not checked: the SBOM contents package by package, and a run of the published image.
+- **Criterion 7 (browser tests in CI) and the automated suite:** CI on `main` runs
+  `test`, `e2e` and `docker`; they pass on the current revision. The full gate on a
+  fresh clone ran 884 tests with PostgreSQL 16 and 5 browser tests.
+- **Criterion 9 (first run, examples):** one measured run of the authenticated
+  quickstart took 220 s from build to a verified ledger on a small machine with warm
+  image caches ([details](quickstart-timing.md)); no cold-cache or third-party result
+  exists. On the same day the three examples were executed against a fresh local
+  stack: OpenAI SDK, Anthropic SDK (synthetic fixture, so still format-compatible only)
+  and the MCP approved write, with the approval decided through the admin API. The
+  ledger then held 11 entries and verified. The Python SDK examples ran in a
+  `python:3.12-slim` container because the test host lacked the `venv` module, not in
+  the documented virtual environment.
+- **Still open:** the real-provider Anthropic harness (human-only), independent users,
+  a cold-cache quickstart timing, the 0.3-to-1.0 restore rehearsal, and a live restart
+  round for criterion 8.
 
 ## Human-only work before a v1 release decision
 
