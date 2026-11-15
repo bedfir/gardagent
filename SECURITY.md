@@ -27,6 +27,17 @@ Gardagent is maintained by volunteers, so everything below is **best effort**, n
 Only the **latest published release** receives security fixes. Please reproduce the issue on the latest release before
 reporting it.
 
+## Security advisories
+
+### 2026-11-15 - fixed in 0.4.1 (affects 0.4.0)
+
+Two issues were found by an independent read-only review of the 0.4.0 tag. No exploitation in the wild is known; none was looked for. Upgrade to 0.4.1; no migration is needed.
+
+1. **Disabled agents could still use MCP tools (high).** Affected: 0.4.0, and by reading the source the 0.3.0 release too (the older releases were not tested). The MCP route did not check that the agent was active. An agent an operator had disabled kept executing allowed read tools, and write tools after approval, with its existing key. Workaround until you upgrade: rotate the agent's key (the old key then stops authenticating) or remove its tool permissions; do not rely on disabling. Fixed in 0.4.1: a disabled agent is refused before admission and the refusal is journaled as `agent_disabled`.
+2. **SSE framing could bypass enforce-mode filtering of MCP server messages (high, needs a hostile upstream).** Affected: 0.4.0 (0.3.0 did not filter server messages). A malicious or compromised MCP server could use a lone carriage return as a line ending so that a forbidden message, such as a `sampling/createMessage` request, was relayed to the client without being screened or journaled. It only matters when the MCP server itself is not trusted and the client accepts that framing. Workaround: none inside the gateway; do not connect untrusted MCP servers. Fixed in 0.4.1: every message is screened and re-serialised by the gateway.
+
+Also fixed in 0.4.1 (correctness, not a security boundary): gateway ledger verification now checks approval correlation like the standalone verifier, legacy 0.3.0 approvals verify, and rate-limited MCP requests answer HTTP 429. See the [changelog](CHANGELOG.md#041---2026-11-15).
+
 ## Scope
 
 In scope:
@@ -44,7 +55,7 @@ Out of scope:
   untrusted network without the reverse proxy of `deploy/`.
 - Weak or leaked secrets chosen by the operator, and the security of the model providers or MCP servers behind the
   gateway.
-- Denial of service through traffic volume (there is no per-agent rate limiting yet), and findings that require
+- Denial of service through traffic volume (per-agent limits are optional and process-local, see [rate-limits.md](docs/rate-limits.md)), and findings that require
   administrator access or access to the host.
 - Vulnerabilities in third-party dependencies with no demonstrated impact on Gardagent (please report those upstream).
 

@@ -6,6 +6,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-11-15
+
+Correctness and security fixes only, found by an independent read-only review of the 0.4.0 tag. No schema change and no change to the ledger format or to any stored hash: upgrading from 0.4.0 needs no migration. Read the first two entries and the [security advisory](SECURITY.md#security-advisories) if you run 0.4.0 or earlier with MCP servers in enforce mode.
+
+### Security
+
+- **A disabled agent could still use MCP.** The MCP route never checked that the agent was active, so an agent disabled by an operator kept running allowed read tools, and write tools after approval, with its existing key. A disabled agent is now refused before rate limiting, method admission and approval (HTTP 403 with JSON-RPC `-32000` for requests, HTTP 202 for notifications), with one `denied` ledger row, reason `agent_disabled`, and no upstream call. In observe mode the call continues and the row records `observed:agent_disabled`. Affects 0.4.0; the check is also absent from the 0.3.0 source.
+- **SSE framing could hide a forbidden server request from enforce-mode filtering.** The event splitter recognised only LF and CRLF line endings while the SSE format also allows a lone CR, and the gateway forwarded the original upstream bytes after screening only the message it had parsed. A malicious or compromised MCP server could send a message the gateway never screened (for example `sampling/createMessage`) in the same stream. The splitter and the data parser now treat LF, CRLF and CR consistently, and the gateway re-serialises only the messages it has screened (`event: message` plus `data:`), dropping comments and the `id:`, `retry:` and unknown fields. Affects 0.4.0.
+
+### Fixed
+
+- Ledger verification in the gateway (`GET` and `POST /admin/ledger/verify`) now applies the same approval correlation as the standalone verifier: a call that references an approval needs an earlier allowed decision for the same approval, agent and arguments hash. Until now the gateway could report `valid: true` for a correctly hashed chain that the standalone verifier rejects. The hash chain itself was always checked. Re-run verification on exports you rely on.
+- Approvals that were pending when a 0.3.0 database was migrated carry no policy revision. Deciding one after the upgrade produced a valid ledger that the standalone verifier rejected with `invalid_approval_decision`. A decision may now omit `policyRev` only when no format-2 approval request with the same reference exists in the export (a migrated approval has none). Nothing is backfilled and no stored hash changes; the rule is written in the [ledger format](docs/ledger-format.md) and tested in the standalone verifier, in core verification and in a migration-to-export test.
+- Rate-limited MCP requests now answer HTTP 429 with the `Retry-After` header and the unchanged JSON-RPC `-32004` body; they used to answer HTTP 200, so HTTP-level monitoring and retry logic counted the refusal as a success. Notifications already answered 429. **Behaviour change:** a client that matched on HTTP 200 plus `-32004` must now also handle HTTP 429.
+
 ## [0.4.0] - 2026-11-12
 
 ### Breaking changes
