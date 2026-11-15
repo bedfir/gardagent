@@ -32,8 +32,9 @@ and the evidence is linked from the release notes:
 
 1. At least three independent deployments or evaluations are reported, covering at least four weeks of use, with
    their upgrade and first-run results.
-2. The Anthropic endpoint is either verified against the real provider (a recorded run, with model, rates and
-   limits) or its claim is removed from the product.
+2. The Anthropic endpoint is verified beyond the single narrow run recorded on 2026-11-12 (one model, short
+   prompts, no tool use or cache pricing): more models and request kinds, and the recorded cost compared with
+   real billing; otherwise the claim is narrowed or removed.
 3. A person, not an AI session, has reviewed the security-critical code: authentication, the ledger and its
    verifier, MCP admission and approvals.
 4. The quickstart has been timed by someone other than a maintainer on a cold cache.
