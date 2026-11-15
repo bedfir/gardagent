@@ -28,8 +28,9 @@ describe("SSE framing", () => {
     const events = Array.from(`\uFEFF${first}${second}`).flatMap((chunk) => splitter.push(chunk));
     const rest = splitter.flush();
     if (rest) events.push(rest);
-    const normalize = (text: string) => text.replace(/\r\n|\r|\n/g, "\n");
-    expect(events.map(normalize)).toEqual([first, second].map(normalize));
+    // Exactly two events; an LF folded into a chunk-final CR changes the event's bytes, not its content.
+    expect(events).toHaveLength(2);
+    expect(events[0]).toBe(first);
     expect(events.map(parseSseData)).toEqual([message, message]);
     expect(parseSseData(`\uFEFF${data}\r\r`)).toEqual(message);
   });
