@@ -16,6 +16,7 @@ import {
   type Agent,
   type AgentPatch,
   type ApprovalStatus,
+  type ApprovalDecisionState,
   type LedgerInput,
   type LedgerQuery,
   type Store,
@@ -604,13 +605,14 @@ export function registerAdmin(app: FastifyInstance, deps: { config: GatewayConfi
       let afterSeq = 0;
       let prevHash = GENESIS_HASH;
       let lastVersion: 1 | 2 = 1;
+      const decisions: ApprovalDecisionState = new Map();
       let total = 0;
       let contains = expected?.sequence === 0 && expected.head_hash === GENESIS_HASH;
       for (;;) {
         const page = await store.listLedger({ afterSeq, beforeSeq: head.sequence + 1, limit: PAGE });
         if (page.length === 0) break;
         if (page[0]!.seq !== afterSeq + 1) return { valid: false, checked: total, brokenAtSeq: page[0]!.seq, problem: "seq_gap", ...(expected ? { checkpointContained: false } : {}) };
-        const check = verifyChain(page, prevHash, lastVersion);
+        const check = verifyChain(page, prevHash, lastVersion, decisions);
         if (!check.valid) return { valid: false, checked: total, brokenAtSeq: check.brokenAtSeq, problem: check.problem, ...(expected ? { checkpointContained: false } : {}) };
         if (expected && page.some((e) => e.seq === expected.sequence && e.hash === expected.head_hash)) contains = true;
         total += page.length;

@@ -14,17 +14,22 @@ export function chainEntry(seq: number, prevHash: string, input: LedgerInput): L
 
 export type ChainCheck =
   | { valid: true; count: number; lastHash: string; lastVersion: 1 | 2 }
-  | { valid: false; count: number; brokenAtSeq: number; problem: "hash_mismatch" | "link_mismatch" | "seq_gap" | "unsupported_format" | "invalid_format" };
+  | { valid: false; count: number; brokenAtSeq: number; problem: "hash_mismatch" | "link_mismatch" | "seq_gap" | "unsupported_format" | "invalid_format" | "invalid_approval_decision" | "approval_mismatch" };
+
+/** Approval decisions retained across pages of a single verification run. */
+export type ApprovalDecisionState = Map<string, LedgerEntry>;
 
 /**
  * Verifies the integrity of a sequence of consecutive rows.
  * `startPrevHash` and `startVersion` carry the preceding verified page state.
+ * `decisions` must be shared across pages and fresh for each independent run.
  * Independent ranges default to version 1; empty ranges preserve the start state.
  */
 export function verifyChain(
   entries: LedgerEntry[],
   startPrevHash: string = GENESIS_HASH,
   startVersion: 1 | 2 = 1,
+  decisions: ApprovalDecisionState = new Map(),
 ): ChainCheck {
   let prev = startPrevHash;
   let expectedSeq = entries[0]?.seq ?? 1;
@@ -51,6 +56,24 @@ export function verifyChain(
           (entry.policyRev !== undefined && !/^[0-9a-f]{64}$/.test(entry.policyRev)) ||
           (entry.degraded !== undefined && entry.degraded !== true)))) {
       return { valid: false, count: entries.length, brokenAtSeq: entry.seq, problem: "invalid_format" };
+    }
+    if (v2) {
+      // Keep these rules aligned with the independent export verifier.
+      const nonempty = (value: unknown): value is string => typeof value === "string" && value.length > 0;
+      const hex = (value: unknown) => typeof value === "string" && /^[0-9a-f]{64}$/.test(value);
+      if (entry.action === "mcp.approval.decided") {
+        if (!nonempty(entry.approvalRef) || !hex(entry.policyRev) || !hex(entry.requestHash) ||
+            (entry.reason === "expired" ? entry.verdict !== "denied" || Object.hasOwn(entry, "operatorId") : !nonempty(entry.operatorId))) {
+          return { valid: false, count: entries.length, brokenAtSeq: entry.seq, problem: "invalid_approval_decision" };
+        }
+        decisions.set(entry.approvalRef, entry);
+      }
+      if (entry.action === "mcp.tools/call" && Object.hasOwn(entry, "approvalRef")) {
+        const decision = decisions.get(entry.approvalRef!);
+        if (!decision || decision.verdict !== "allowed" || decision.agentId !== entry.agentId || decision.requestHash !== entry.requestHash) {
+          return { valid: false, count: entries.length, brokenAtSeq: entry.seq, problem: "approval_mismatch" };
+        }
+      }
     }
     lastVersion = v2 ? 2 : 1;
     prev = hash;
