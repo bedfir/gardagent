@@ -307,7 +307,7 @@ export function registerMcp(app: FastifyInstance, deps: McpDeps): void {
       const data = parseSseData(event);
       if (!data) { responseReason = "invalid_upstream_message"; return ""; }
       const screened = await screen(data);
-      return !screened ? "" : screened === data ? event : `event: message\ndata: ${JSON.stringify(screened)}\n\n`;
+      return !screened ? "" : `event: message\ndata: ${JSON.stringify(screened)}\n\n`;
     };
     const out: Record<string, string> = {};
     for (const name of [SESSION, PROTOCOL]) {

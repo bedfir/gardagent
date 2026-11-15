@@ -196,7 +196,7 @@ describe("mcp: headers", () => {
 });
 
 describe("mcp: stream and errors", () => {
-  it("text/event-stream response relayed as-is, ledger written", async () => {
+  it("text/event-stream response relayed canonically, ledger written", async () => {
     const events = `event: message\ndata: ${JSON.stringify({ jsonrpc: "2.0", method: "notifications/progress", params: {} })}\n\nevent: message\ndata: ${JSON.stringify(ok)}\n\n`;
     const { app, store } = make(() => sseResponse([events.slice(0, 20), events.slice(20, 90), events.slice(90)]));
     const { key } = await agentWith(app, ["gh/*"]);
@@ -204,6 +204,35 @@ describe("mcp: stream and errors", () => {
     expect(res.headers["content-type"]).toContain("text/event-stream");
     expect(res.body).toBe(events);
     expect((await proxyLedger(store))[0]).toMatchObject({ model: "gh/search#read", verdict: "allowed", reason: null, upstreamStatus: 200 });
+  });
+
+  it("screens messages hidden behind mixed SSE line endings", async () => {
+    const forbidden = { jsonrpc: "2.0", id: "server-1", method: "sampling/createMessage", params: {} };
+    const events = `data: ${JSON.stringify(ok)}\n:ignored\r\rdata: ${JSON.stringify(forbidden)}\r\r\n\n`;
+    const { app, store } = make(() => sseResponse([events]));
+    const { key } = await agentWith(app, ["*"]);
+    const res = await post(app, key, call("search"));
+    expect(res.body).toBe(`event: message\ndata: ${JSON.stringify(ok)}\n\n`);
+    expect(res.body).not.toContain("sampling/createMessage");
+    expect(await proxyLedger(store)).toEqual(expect.arrayContaining([
+      expect.objectContaining({ action: "mcp.sampling/createMessage", verdict: "denied", reason: "server_request_refused" }),
+    ]));
+  });
+
+  it("serializes only screened data and drops upstream SSE metadata", async () => {
+    const events = `:comment\nid: upstream-1\nretry: 1000\nevent: custom\nunknown: ignored\ndata: ${JSON.stringify(ok)}\n\n`;
+    const { app } = make(() => sseResponse([events]));
+    const { key } = await agentWith(app, ["*"]);
+    expect((await post(app, key, call("search"))).body).toBe(`event: message\ndata: ${JSON.stringify(ok)}\n\n`);
+  });
+
+  it.each(["data: {invalid}", `data: ${JSON.stringify(ok)}\rdata: ${JSON.stringify(ok)}`])("refuses invalid SSE data: %s", async (data) => {
+    const { app, store } = make(() => sseResponse([`${data}\n\n`]));
+    const { key } = await agentWith(app, ["*"]);
+    expect((await post(app, key, call("search"))).body).toBe("");
+    expect(await proxyLedger(store)).toEqual(expect.arrayContaining([
+      expect.objectContaining({ reason: "invalid_upstream_message" }),
+    ]));
   });
 
   it("unreachable server -> 502 JSON-RPC and ledger upstream_unreachable", async () => {
@@ -467,8 +496,9 @@ describe("mcp: exhaustive governance matrix", () => {
     const events = `data: ${JSON.stringify({ jsonrpc: "2.0", method })}\n\ndata: ${JSON.stringify(ok)}\n\n`;
     const { app, store } = make(() => sseResponse([events]));
     const { key } = await agentWith(app, ["*"]);
-    expect((await post(app, key, call("search"))).body).toBe(events);
-    expect((await proxyLedger(store))[0]).toMatchObject({ responseHash: sha256(events) });
+    const canonical = `event: message\ndata: ${JSON.stringify({ jsonrpc: "2.0", method })}\n\nevent: message\ndata: ${JSON.stringify(ok)}\n\n`;
+    expect((await post(app, key, call("search"))).body).toBe(canonical);
+    expect((await proxyLedger(store))[0]).toMatchObject({ responseHash: sha256(canonical) });
   });
 
   it("filters initialization capabilities and journals observe differences", async () => {
