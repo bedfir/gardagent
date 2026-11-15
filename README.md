@@ -34,7 +34,8 @@ configuration; the agent's code does not change.
 
 Written for Linux x86-64, Docker Engine with Compose v2, a POSIX shell, Python 3,
 `git`, `curl`, and `openssl`; plan for 8 GiB RAM and 6 GiB free disk. CPU inference
-needs no GPU. Under ten minutes is a target, not yet measured by a third party.
+needs no GPU. Under ten minutes is a target: one maintainer run took about 3.7 minutes on a small machine with warm
+Docker caches, and nobody else has measured it yet ([method and numbers](docs/quickstart-timing.md)).
 The first build and model download require internet access and may take longer.
 No provider key is needed. Ollama serves `qwen2.5:0.5b`; local accounting rates are
 zero, which does not measure electricity or hardware use.
