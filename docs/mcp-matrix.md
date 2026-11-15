@@ -121,6 +121,6 @@ proxy limits that wait with the existing upstream timeout and ends the stream; t
 - The existing approval-store outage refusal remains in observe mode: it cannot safely execute a write without the required durable approval state. Unsupported framing also remains refused in observe mode.
 - Legacy SSE paths have no route; other unsupported HTTP verbs use the framework's route refusal and are never forwarded.
 
-Per-agent rate refusals include `Retry-After`. MCP requests currently use HTTP 200 with
-JSON-RPC `-32004` and `retryAfter` data; notifications use HTTP 429 with an empty body.
-The request status is a [readiness gap](v1-readiness.md) against the HTTP 429 exit criterion.
+Per-agent rate refusals return HTTP 429 and include `Retry-After`. MCP requests preserve
+JSON-RPC `-32004`, message `Agent request limit reached.`, and `data.retryAfter` matching
+the header; notifications use an empty body.

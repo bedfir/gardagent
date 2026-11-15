@@ -90,7 +90,7 @@ export function registerMcp(app: FastifyInstance, deps: McpDeps): void {
       observedReason = "observed:agent_disabled";
     }
     const rate = await gov.rateLimit(agent, reply, base);
-    if (rate.denied) return notification ? reply.code(429).send() : reply.code(200).send(rpcError(id, -32004, "Agent request limit reached.", { retryAfter: rate.retryAfter }));
+    if (rate.denied) return reply.code(429).send(notification ? undefined : rpcError(id, -32004, "Agent request limit reached.", { retryAfter: rate.retryAfter }));
     if (rate.observed) observedReason ??= "observed:rate_limited";
     const declared = notification
       ? (MCP_NOTIFICATIONS as readonly string[]).includes(msg.method)

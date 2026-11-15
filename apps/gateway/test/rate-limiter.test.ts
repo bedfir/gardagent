@@ -56,6 +56,31 @@ describe("agent rate limits", () => {
       expect((await store.listLedger()).at(-1)?.reason).toBe("observed:rate_limited");
     } finally { await app.close(); }
   });
+
+  it.each(["enforce", "observe"] as const)("preserves the MCP request-rate response contract in %s mode", async mode => {
+    const { app, store, calls } = setupWith({ mode, mcpServers: { local: { url: "http://mcp.test", headers: {} } } });
+    try {
+      const { key } = await createAgent(app, { name: "limited", allowedModels: ["*"], dailyBudgetUsd: 0, unlimited: true, requestsPerMinute: 1 });
+      const request = { method: "POST" as const, url: "/mcp/local", headers: { authorization: `Bearer ${key}` }, payload: { jsonrpc: "2.0", id: "limited-ping", method: "ping" } };
+      expect((await app.inject(request)).statusCode).toBe(200);
+      const response = await app.inject(request);
+      if (mode === "observe") {
+        expect(response.statusCode).toBe(200);
+        expect(response.json()).toEqual({ jsonrpc: "2.0", id: "limited-ping", result: {} });
+        expect(response.headers["retry-after"]).toBeUndefined();
+        expect((await store.listLedger()).at(-1)).toMatchObject({ verdict: "allowed", reason: "observed:rate_limited" });
+      } else {
+        expect(response.statusCode).toBe(429);
+        const retryAfter = Number(response.headers["retry-after"]);
+        expect(Number.isInteger(retryAfter)).toBe(true);
+        expect(retryAfter).toBeGreaterThan(0);
+        expect(retryAfter).toBeLessThanOrEqual(60);
+        expect(response.json()).toEqual({ jsonrpc: "2.0", id: "limited-ping", error: { code: -32004, message: "Agent request limit reached.", data: { retryAfter } } });
+        expect((await store.listLedger()).at(-1)).toMatchObject({ verdict: "denied", reason: "rate_limited", cost: 0 });
+      }
+      expect(calls).toHaveLength(0);
+    } finally { await app.close(); }
+  });
 });
 
 
@@ -141,9 +166,13 @@ it("shares the boundary across model endpoints and MCP, and isolates agents", as
     expect(anthropic.statusCode).toBe(429);
     expect(anthropic.json().error.type).toBe("rate_limit_error");
     const mcp = (key: string, notification = false) => app.inject({ method: "POST", url: "/mcp/local", headers: { authorization: `Bearer ${key}` }, payload: notification ? { jsonrpc: "2.0", method: "notifications/initialized" } : { jsonrpc: "2.0", id: 1, method: "ping" } });
-    expect((await mcp(first.key)).json().error).toMatchObject({ code: -32004, data: { retryAfter: 1 } });
+    const refusedMcp = await mcp(first.key);
+    expect(refusedMcp.statusCode).toBe(429);
+    expect(refusedMcp.headers["retry-after"]).toBe("1");
+    expect(refusedMcp.json()).toEqual({ jsonrpc: "2.0", id: 1, error: { code: -32004, message: "Agent request limit reached.", data: { retryAfter: 1 } } });
     const notification = await mcp(first.key, true);
     expect(notification.statusCode).toBe(429);
+    expect(notification.headers["retry-after"]).toBe("1");
     expect(notification.body).toBe("");
     expect((await mcp(second.key)).json().result).toEqual({});
     finish();

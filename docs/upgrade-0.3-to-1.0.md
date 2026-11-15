@@ -110,9 +110,9 @@ refuses malformed framing and cannot bypass durable approval-state outage checks
 Optional `requestsPerMinute` and `maxConcurrentRequests` are configured through
 POST/PATCH `/admin/agents`. Zero means unlimited; omitted PATCH fields are unchanged.
 They share counters across both model endpoints and MCP for an agent. Model refusals return
-HTTP 429 with `Retry-After` before budget reservation. MCP requests currently return HTTP 200
-with JSON-RPC `-32004` and `Retry-After`; notifications return HTTP 429 with an empty body.
-The MCP request status remains a gap against the HTTP 429 exit criterion. Approval waits occupy a concurrency slot.
+HTTP 429 with `Retry-After` before budget reservation. MCP requests return HTTP 429
+with JSON-RPC `-32004`, `data.retryAfter` and `Retry-After`; notifications return HTTP 429 with an empty body.
+Approval waits occupy a concurrency slot.
 Counters are process-local and reset on restart; observe mode records rather than
 blocks a rate violation. See [rate-limits.md](rate-limits.md).
 
