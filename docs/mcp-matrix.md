@@ -34,6 +34,14 @@ M08 replaces that test, as allowed by the team rules.
 | Unknown server name | HTTP 404, `-32000` (unchanged) | Not declared. |
 | Missing or invalid agent key | HTTP 401 (503 `agent_unverifiable_during_outage` during an outage), journaled as `invalid_key` (unchanged) | Authentication comes first for POST; unsupported GET and DELETE return 405 without admission. |
 
+After authentication and framing validation, a disabled agent is refused before rate limiting or method/tool
+admission in enforce mode: requests receive HTTP 403 with JSON-RPC error `-32000` (gateway refusal), and
+notifications receive HTTP 202 with an empty body. Each refusal records one `denied` row with reason
+`agent_disabled` and the message's base fields; no upstream call or approval is created. In observe mode,
+processing continues and the eventual allowed row records `observed:agent_disabled`, ahead of other observed
+policy violations. Admin updates invalidate the process's outage cache before responding; healthy requests
+always re-read the agent.
+
 ## 2. Client-to-server requests (have an `id` and a `method`)
 
 | Method | Decision | Ledger row | Reason |

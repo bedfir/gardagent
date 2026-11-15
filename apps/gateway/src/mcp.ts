@@ -82,9 +82,16 @@ export function registerMcp(app: FastifyInstance, deps: McpDeps): void {
       return reply.code(400).send(rpcError(id, -32600, "Invalid JSON-RPC request."));
     }
     let observedReason: string | null = null;
+    if (!agent.active) {
+      if (config.mode !== "observe") {
+        await journal("agent_disabled", true);
+        return notification ? reply.code(202).send() : reply.code(403).send(rpcError(id, -32000, "Agent is disabled."));
+      }
+      observedReason = "observed:agent_disabled";
+    }
     const rate = await gov.rateLimit(agent, reply, base);
     if (rate.denied) return notification ? reply.code(429).send() : reply.code(200).send(rpcError(id, -32004, "Agent request limit reached.", { retryAfter: rate.retryAfter }));
-    if (rate.observed) observedReason = "observed:rate_limited";
+    if (rate.observed) observedReason ??= "observed:rate_limited";
     const declared = notification
       ? (MCP_NOTIFICATIONS as readonly string[]).includes(msg.method)
       : (MCP_REQUESTS as readonly string[]).includes(msg.method);
