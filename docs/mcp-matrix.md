@@ -34,6 +34,14 @@ M08 replaces that test, as allowed by the team rules.
 | Unknown server name | HTTP 404, `-32000` (unchanged) | Not declared. |
 | Missing or invalid agent key | HTTP 401 (503 `agent_unverifiable_during_outage` during an outage), journaled as `invalid_key` (unchanged) | Authentication comes first for POST; unsupported GET and DELETE return 405 without admission. |
 
+After authentication and framing validation, a disabled agent is refused before rate limiting or method/tool
+admission in enforce mode: requests receive HTTP 403 with JSON-RPC error `-32000` (gateway refusal), and
+notifications receive HTTP 202 with an empty body. Each refusal records one `denied` row with reason
+`agent_disabled` and the message's base fields; no upstream call or approval is created. In observe mode,
+processing continues and the eventual allowed row records `observed:agent_disabled`, ahead of other observed
+policy violations. Admin updates invalidate the process's outage cache before responding; healthy requests
+always re-read the agent.
+
 ## 2. Client-to-server requests (have an `id` and a `method`)
 
 | Method | Decision | Ledger row | Reason |
@@ -113,6 +121,6 @@ proxy limits that wait with the existing upstream timeout and ends the stream; t
 - The existing approval-store outage refusal remains in observe mode: it cannot safely execute a write without the required durable approval state. Unsupported framing also remains refused in observe mode.
 - Legacy SSE paths have no route; other unsupported HTTP verbs use the framework's route refusal and are never forwarded.
 
-Per-agent rate refusals include `Retry-After`. MCP requests currently use HTTP 200 with
-JSON-RPC `-32004` and `retryAfter` data; notifications use HTTP 429 with an empty body.
-The request status is a [readiness gap](v1-readiness.md) against the HTTP 429 exit criterion.
+Per-agent rate refusals return HTTP 429 and include `Retry-After`. MCP requests preserve
+JSON-RPC `-32004`, message `Agent request limit reached.`, and `data.retryAfter` matching
+the header; notifications use an empty body.

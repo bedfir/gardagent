@@ -71,6 +71,7 @@ export function verifyExport(text: string, supplied: unknown[] = []): Result {
   let havePage = false;
   const hashes = new Map<number, string>([[0, GENESIS]]);
   const decisions = new Map<unknown, Row>();
+  const approvalRequests = new Set<unknown>();
   const finishPage = () => {
     if (!havePage || !captured) return;
     const expected = result.head.sequence < captured.sequence ? result.head.sequence : null;
@@ -97,8 +98,14 @@ export function verifyExport(text: string, supplied: unknown[] = []): Result {
     if (fingerprint(row) !== row.hash) { fail("hash_mismatch", seq); break; }
     if (!contentValid(row, lastVersion)) { fail("invalid_format", seq); break; }
     if (row.formatVersion === 2) {
+      if (row.action === "mcp.approval.requested") {
+        if (nonempty(row.approvalRef)) approvalRequests.add(row.approvalRef);
+      }
       if (row.action === "mcp.approval.decided") {
-        if (!nonempty(row.approvalRef) || !hex(row.policyRev) || !hex(row.requestHash) ||
+        // Migrated 0.3.0 approvals have no correlatable format-2 request (v1 has no
+        // approvalRef). Only those decisions may preserve an absent policyRev.
+        const legacyRevision = !Object.hasOwn(row, "policyRev") && !approvalRequests.has(row.approvalRef);
+        if (!nonempty(row.approvalRef) || (!hex(row.policyRev) && !legacyRevision) || !hex(row.requestHash) ||
             (row.reason === "expired" ? row.verdict !== "denied" || Object.hasOwn(row, "operatorId") : !nonempty(row.operatorId))) {
           fail("invalid_approval_decision", seq); break;
         }

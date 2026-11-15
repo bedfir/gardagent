@@ -164,8 +164,9 @@ regression reports `invalid_format`. `verifyChain` accepts the preceding verifie
 returns `lastVersion` with a successful result, including for an empty range. Paginated full-chain verification MUST
 carry this state alongside the preceding hash across pages. Independent partial verification defaults to version 1
 and checks version ordering only within the supplied range.
-The action-specific approval checks below belong to the gateway verifier implemented with M05; they are not
-performed by core verification. A version 2 marker alone does not establish that every optional mandate field is populated; historical references may be unavailable.
+The action-specific approval checks below are performed by core verification as well as by the standalone verifier
+(0.4.1): `verifyChain` takes an approval state (decisions and format-2 request ids) that a paginated verification MUST
+carry across pages, like the preceding hash and version, and a fresh state for each independent run. A version 2 marker alone does not establish that every optional mandate field is populated; historical references may be unavailable.
 
 For entries of format version 2 (these are checks on content, in addition to the chain rule of section 1.4):
 
@@ -173,11 +174,20 @@ For entries of format version 2 (these are checks on content, in addition to the
 - An `mcp.tools/call` row carrying `approvalRef` is matched by an earlier `mcp.approval.decided` row with the same
   `approvalRef`, `verdict: "allowed"`, the same `agentId` and the same `requestHash`. The `requestHash` equality is
   the binding between the human decision and the arguments that were then executed.
+- A format-2 decision MUST carry `approvalRef`, `requestHash` and `policyRev`, with one explicit legacy
+  exception: `policyRev` MAY be absent if there is no earlier format-2 `mcp.approval.requested` row with
+  the same `approvalRef` in the complete export. Migration leaves 0.3.0 approvals' revisions null;
+  format-1 requests have no `approvalRef` and cannot be correlated by id. A migrated approval may
+  therefore have no correlatable request in the format-2 chain. This absence is the exception key;
+  it does not prove the approval's provenance. A decision whose format-2 request exists MUST carry
+  `policyRev`, or reports `invalid_approval_decision`. No revision is invented or backfilled, and
+  absent fields remain absent from the canonical hash input. This exception applies to human decisions
+  and automatic expiry alike.
 - An `mcp.approval.decided` row is one of two kinds, told apart by `reason`:
   - **Human decision** (`reason` is not `expired`): it MUST carry an `operatorId`.
   - **Automatic expiry** (`reason: "expired"`, `verdict: "denied"`): written by the gateway when the approval timed out
     or the waiting request was cancelled. No operator authenticated it, so it MUST NOT carry an `operatorId`, and the
-    verifier reports one as invalid. It carries `approvalRef`, `requestHash` and `policyRev` like any decision. The
+    verifier reports one as invalid. It carries `approvalRef`, `requestHash` and, subject to the legacy exception above, `policyRev` like any decision. The
     absence of an operator is the statement "no human decided"; it is never attributed to the bootstrap operator.
   - An `mcp.tools/call` row never matches an expiry row as its authorizing decision (the match above requires
     `verdict: "allowed"`).

@@ -6,6 +6,10 @@ import { verifyChain, policyRevision, type Agent, type LedgerEntry } from "@gard
 import { PgStore } from "../src/pg-store.js";
 import { MIGRATIONS, migrateDatabase } from "../src/migrations.js";
 
+import { verifyExport } from "../../../packages/verify/src/index.js";
+import { buildApp } from "../src/app.js";
+import { adminHeaders, config } from "./helpers.js";
+
 const url = process.env.TEST_DATABASE_URL;
 const legacy = readFileSync(new URL("./fixtures/schema-0.3.0.sql", import.meta.url), "utf8");
 
@@ -77,6 +81,27 @@ describe.skipIf(!url)("versioned PostgreSQL migrations", () => {
     expect(columns).toHaveLength(4);
     for (const column of columns) expect(column).toEqual({ column_default: null, is_nullable: "YES" });
     await expect(pool.query("UPDATE ledger SET cost = 0")).rejects.toThrow(/append-only/);
+  }));
+
+  it("exports a valid decision for a migrated revisionless pending approval", async () => fixture(async (pool, store) => {
+    await pool.query(legacy);
+    await pool.query(`INSERT INTO approvals (id, created_at, agent_id, server, tool, args_hash, args_summary)
+      VALUES ('legacy', $1, 'old', 'test', 'write', $2, '{}')`, [new Date().toISOString(), "a".repeat(64)]);
+    await store.migrate();
+    expect(await store.getApproval("legacy")).not.toHaveProperty("policyRev");
+    const app = buildApp({ config, store });
+    try {
+      const decision = await app.inject({ method: "POST", url: "/admin/approvals/legacy/approve", headers: adminHeaders });
+      expect(decision.statusCode).toBe(200);
+      expect(decision.json().approval).not.toHaveProperty("policyRev");
+      const exported = await app.inject({ method: "GET", url: "/admin/ledger/export.ndjson", headers: adminHeaders });
+      expect(exported.statusCode).toBe(200);
+      expect(await store.listLedger()).toEqual([expect.objectContaining({ action: "mcp.approval.decided", approvalRef: "legacy" })]);
+      expect((await store.listLedger())[0]).not.toHaveProperty("policyRev");
+      expect(verifyExport(exported.body)).toMatchObject({ valid: true, count: 1 });
+    } finally {
+      await app.close();
+    }
   }));
 
   it("a second run leaves all relation identities and migration timestamps unchanged", async () => fixture(async (pool, store) => {

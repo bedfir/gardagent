@@ -100,6 +100,20 @@ describe("independent export verifier", () => {
     const { operatorId: _operator, ...expiry } = decision;
     expect(verifyExport(page(rehash([{ ...expiry, reason: "expired", verdict: "denied" }]))).valid).toBe(true);
   });
+  it("accepts revisionless legacy decisions but rejects them when a format-2 request exists", () => {
+    const { seq: _seq, prevHash: _prev, hash: _hash, ...input } = golden.entries[0]!;
+    const request = chainEntry(1, GENESIS_HASH, { ...input, action: "mcp.approval.requested" });
+    const decision = chainEntry(2, request.hash, { ...input, formatVersion: 2,
+      action: "mcp.approval.decided", approvalRef: "legacy", operatorId: "bootstrap" });
+    expect(verifyExport(page([request, decision])).valid).toBe(true);
+    // A migrated pending approval may have no correlatable request in the chain.
+    expect(verifyExport(page(rehash([{ ...decision, seq: 1 }]))).valid).toBe(true);
+    const modernRequest = { ...request, formatVersion: 2 as const, approvalRef: "legacy", policyRev: "a".repeat(64) };
+    expect(verifyExport(page(rehash([modernRequest, decision]))).firstInvalid)
+      .toEqual({ sequence: 2, reason: "invalid_approval_decision" });
+    const { operatorId: _operator, ...expiry } = decision;
+    expect(verifyExport(page(rehash([request, { ...expiry, reason: "expired", verdict: "denied" }]))).valid).toBe(true);
+  });
   it("renders JSON and text, with nonzero status for every invalid input", () => {
     const entries = chain([1, 2]);
     const files: Record<string, string> = { export: page(entries), checkpoint: JSON.stringify(cp(entries)) };

@@ -1,44 +1,62 @@
-/**
- * Splits an SSE stream into complete events (separated by an empty line),
- * without altering their bytes, so they can be relayed as-is.
- */
+/** Splits SSE events on blank lines using LF, CRLF, or CR line endings. */
 export class SseSplitter {
   private buffer = "";
+  private cursor = 0;
+  private lineStart = 0;
+  private atStart = true;
+  /** A CR ended the previous chunk: a leading LF of the next chunk belongs to the same CRLF terminator. */
+  private skipLf = false;
 
   push(chunk: string): string[] {
+    if (this.atStart && chunk.length > 0) {
+      this.atStart = false;
+      if (chunk.startsWith("\uFEFF")) chunk = chunk.slice(1);
+    }
+    if (this.skipLf && chunk.length > 0) {
+      this.skipLf = false;
+      if (chunk.startsWith("\n")) chunk = chunk.slice(1);
+    }
     this.buffer += chunk;
     const events: string[] = [];
-    let index: number;
-    while ((index = this.findBoundary()) !== -1) {
-      const end = this.buffer.startsWith("\r\n\r\n", index) ? index + 4 : index + 2;
-      events.push(this.buffer.slice(0, end));
-      this.buffer = this.buffer.slice(end);
+    while (this.cursor < this.buffer.length) {
+      const char = this.buffer[this.cursor];
+      if (char !== "\r" && char !== "\n") {
+        this.cursor++;
+        continue;
+      }
+      // A CR is a complete terminator at once (the event must not wait for the next chunk); if it ends the chunk,
+      // an LF starting the next chunk is dropped so that CRLF still counts as one terminator.
+      if (char === "\r" && this.cursor + 1 === this.buffer.length) this.skipLf = true;
+      const blank = this.cursor === this.lineStart;
+      this.cursor += char === "\r" && this.buffer[this.cursor + 1] === "\n" ? 2 : 1;
+      if (blank) {
+        events.push(this.buffer.slice(0, this.cursor));
+        this.buffer = this.buffer.slice(this.cursor);
+        this.cursor = 0;
+      }
+      this.lineStart = this.cursor;
     }
     return events;
   }
 
-  /** Unfinished remainder at the end of the stream. */
+  /** Unfinished remainder at stream end. */
   flush(): string {
+    this.skipLf = false;
     const rest = this.buffer;
     this.buffer = "";
+    this.cursor = 0;
+    this.lineStart = 0;
     return rest;
-  }
-
-  private findBoundary(): number {
-    const lf = this.buffer.indexOf("\n\n");
-    const crlf = this.buffer.indexOf("\r\n\r\n");
-    if (lf === -1) return crlf;
-    if (crlf === -1) return lf;
-    return Math.min(lf, crlf);
   }
 }
 
 /** Extracts the JSON payload of a `data: {...}` event, or null (comment, [DONE], invalid JSON). */
 export function parseSseData(event: string): Record<string, unknown> | null {
   const data = event
-    .split(/\r?\n/)
+    .replace(/^\uFEFF/, "")
+    .split(/\r\n|[\r\n]/)
     .filter((line) => line.startsWith("data:"))
-    .map((line) => line.slice(5).trimStart())
+    .map((line) => line.slice(5).replace(/^ /, ""))
     .join("\n");
   if (!data || data === "[DONE]") return null;
   try {
