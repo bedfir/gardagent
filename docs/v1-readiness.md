@@ -44,7 +44,12 @@ The table above is the 2026-11-12 inventory and is left as written. Since then:
   ledger then held 11 entries and verified. The Python SDK examples ran in a
   `python:3.12-slim` container because the test host lacked the `venv` module, not in
   the documented virtual environment.
-- **Still open:** the real-provider Anthropic harness (human-only), independent users,
+- **Criterion 6 (Anthropic):** the real-provider harness has been run once, on 2026-11-12,
+  by a human-authorised run (model `claude-haiku-5-5`, plain and streaming, usage and
+  configured-cost check; recorded in [tools/anthropic/README.md](../tools/anthropic/README.md)).
+  The table row above predates it. It is one narrow run: no tool use, cache pricing, long
+  context, other models, or comparison with real billing.
+- **Still open:** broader Anthropic verification, independent users,
   a cold-cache quickstart timing, the 0.3-to-1.0 restore rehearsal, and a live restart
   round for criterion 8.
 
