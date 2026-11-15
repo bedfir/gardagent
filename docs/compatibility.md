@@ -50,13 +50,12 @@ Stable, because clients branch on them:
 | `error.code` on `/v1/chat/completions` (body `{ "error": { "message", "type", "code" } }`) | `invalid_api_key` (401), `missing_model` (400), `model_not_allowed` (403), `agent_disabled` (403), `budget_exceeded` (429), `ledger_unavailable` (503), `agent_unverifiable_during_outage` (503), `upstream_unreachable` (502), `rate_limited` (429 with `Retry-After`) |
 | `error.type` on `/v1/chat/completions` | `invalid_request_error`, `gardagent_policy`, `api_error` |
 | `error.type` on `/v1/messages` (body `{ "type": "error", "error": { "type", "message", "code"? } }`) | `authentication_error`, `permission_error`, `rate_limit_error`, `api_error`, `invalid_request_error` |
-| JSON-RPC `error.code` on `/mcp/:server` | `-32600` (invalid request), `-32602` (missing tool name), `-32603` (internal), `-32000` (gateway refusal: key, unknown server, ledger, unreachable), `-32001` (tool not allowed), `-32002` (approval rejected or timed out), `-32003` (approval unavailable during outage). `-32601` (refused methods), `-32004` (rate limited, currently HTTP 200 with `Retry-After`) |
+| JSON-RPC `error.code` on `/mcp/:server` | `-32600` (invalid request), `-32602` (missing tool name), `-32603` (internal), `-32000` (gateway refusal: key, unknown server, ledger, unreachable), `-32001` (tool not allowed), `-32002` (approval rejected or timed out), `-32003` (approval unavailable during outage). `-32601` (refused methods), `-32004` (rate limited, HTTP 429 with `Retry-After`) |
 | Admin API | the HTTP status (`400`, `401`, `403`, `404`, `409`, and authentication-limit `429`); the body is `{ "error": "<text>" }` |
 
 The `message` / `error` text is **not** stable. Provider errors (`upstream_error`, any status the provider returns) are
-relayed unchanged and are the provider's contract, not Gardagent's. Model rate refusals answer HTTP 429 with `Retry-After` and `rate_limited`. MCP requests currently use HTTP 200
-with `-32004` and `Retry-After`; notifications use HTTP 429 with an empty body. This status mismatch remains a
-[readiness gap](v1-readiness.md), not a claim that the HTTP 429 exit criterion is satisfied.
+relayed unchanged and are the provider's contract, not Gardagent's. Model rate refusals answer HTTP 429 with `Retry-After` and `rate_limited`. MCP requests use HTTP 429
+with `-32004`, `data.retryAfter` and `Retry-After`; notifications use HTTP 429 with an empty body.
 
 ## 3. Agent key format
 

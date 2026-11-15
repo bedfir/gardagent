@@ -80,7 +80,7 @@ Agent cache and `GARDAGENT_AGENT_CACHE_TTL_MS`: the memory cache of agents used 
 
 ## Per-agent limits
 
-Optional `requestsPerMinute` and `maxConcurrentRequests` policy fields govern shared admissions across both model endpoints and MCP. Model and MCP notification refusals return HTTP 429; MCP requests currently return HTTP 200 with JSON-RPC `-32004`. All carry `Retry-After`, cost zero and create no budget reservation. Counters reset on restart and observe mode records rather than blocks violations. See [rate-limits.md](rate-limits.md).
+Optional `requestsPerMinute` and `maxConcurrentRequests` policy fields govern shared admissions across both model endpoints and MCP. Model and MCP refusals return HTTP 429; MCP requests include JSON-RPC `-32004` with `data.retryAfter`, while MCP notifications have an empty body. All carry `Retry-After`, cost zero and create no budget reservation. Counters reset on restart and observe mode records rather than blocks violations. See [rate-limits.md](rate-limits.md).
 
 ## Human approval
 
