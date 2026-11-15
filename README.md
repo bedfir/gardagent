@@ -43,10 +43,11 @@ zero, which does not measure electricity or hardware use.
 git clone https://github.com/bedfir/gardagent.git
 cd gardagent
 export GARDAGENT_ADMIN_TOKEN=$(openssl rand -hex 32)
-docker compose -f docker-compose.local.yml --profile local up -d --build
+docker compose --env-file /dev/null -f docker-compose.local.yml --profile local up -d --build
 ```
 
 Keep this shell open: the token stays in its environment, not a configuration file.
+`--env-file /dev/null` prevents Compose from loading a local `.env` file.
 The command downloads the model before starting the gateway. Check readiness until
 `/health` returns HTTP 200 with `"status":"ok"` and `"database":"up"`:
 
