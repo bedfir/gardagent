@@ -3,7 +3,8 @@ import { MCP_REQUESTS, MCP_NOTIFICATIONS, MCP_SERVER_NOTIFICATIONS } from "../sr
 import { randomUUID } from "node:crypto";
 import pg from "pg";
 import { describe, expect, it } from "vitest";
-import { canonicalJson, sha256 } from "@gardagent/core";
+import { canonicalJson, hashAgentKey, sha256 } from "@gardagent/core";
+import { agentCacheFor } from "../src/agent-cache.js";
 import { parseMcpServers } from "../src/config.js";
 import { PgStore } from "../src/pg-store.js";
 import { adminHeaders, nextPending, createAgent, jsonResponse, proxyLedger, setupWith, sseResponse } from "./helpers.js";
@@ -26,6 +27,74 @@ const post = (app: ReturnType<typeof make>["app"], key: string, payload: unknown
   app.inject({ method: "POST", url: `/mcp/${server}`, headers: { authorization: `Bearer ${key}`, ...headers }, payload: payload as object });
 const agentWith = (app: ReturnType<typeof make>["app"], allowedTools: string[]) =>
   createAgent(app, { name: "bot", allowedModels: ["*"], allowedTools, dailyBudgetUsd: 0, unlimited: true });
+
+describe("mcp: disabled agents", () => {
+  const messages = [
+    call("search"), call("write"), rpc("tools/list"), rpc("ping"),
+    rpc("notifications/initialized", {}, null), rpc("resources/list"),
+  ];
+
+  it.each(messages)("enforce refuses disabled agents before admission: %j", async (message) => {
+    const { app, store, calls } = setupWith({ mcpServers: servers, approvalTimeoutMs: 20 }, () => jsonResponse(ok));
+    const { agent, key } = await agentWith(app, ["*"]);
+    expect((await app.inject({ method: "PATCH", url: `/admin/agents/${agent.id}`, headers: adminHeaders,
+      payload: { active: false, requestsPerMinute: 1 } })).statusCode).toBe(200);
+    // Repetition also proves that the rate limiter cannot replace the disabled-agent denial.
+    for (let i = 0; i < 2; i++) {
+      const res = await post(app, key, message);
+      const notification = !Object.hasOwn(message, "id");
+      expect(res.statusCode).toBe(notification ? 202 : 403);
+      if (notification) expect(res.body).toBe("");
+      else expect(res.json()).toMatchObject({ jsonrpc: "2.0", id: 1, error: { code: -32000 } });
+    }
+    expect(calls).toHaveLength(0);
+    expect(await store.listApprovals()).toHaveLength(0);
+    const rows = await proxyLedger(store);
+    expect(rows).toHaveLength(2);
+    for (const row of rows) expect(row).toMatchObject({
+      agentId: agent.id, action: `mcp.${message.method}`, model: "gh/-",
+      verdict: "denied", reason: "agent_disabled", upstreamStatus: null,
+      requestHash: sha256(canonicalJson(message.params ?? {})),
+      promptTokens: 0, completionTokens: 0, cost: 0, responseHash: null,
+    });
+  });
+
+  it.each(messages)("observe continues with disabled-agent evidence: %j", async (message) => {
+    const { app, store, calls } = setupWith({ mcpServers: servers, mode: "observe" }, () => jsonResponse(ok));
+    const { agent, key } = await agentWith(app, ["gh/write"]);
+    expect((await app.inject({ method: "PATCH", url: `/admin/agents/${agent.id}`, headers: adminHeaders,
+      payload: { active: false, requestsPerMinute: 1 } })).statusCode).toBe(200);
+    for (let i = 0; i < 2; i++) {
+      const res = await post(app, key, message);
+      expect(res.statusCode).toBe(Object.hasOwn(message, "id") ? 200 : 202);
+    }
+    expect(calls).toHaveLength(message.method === "ping" ? 0 : 2);
+    expect(await store.listApprovals()).toHaveLength(0);
+    const rows = await proxyLedger(store);
+    expect(rows).toHaveLength(2);
+    for (const row of rows) expect(row).toMatchObject({ verdict: "allowed", reason: "observed:agent_disabled" });
+  });
+
+  it("admin disable invalidates a warm outage cache; re-enabling restores MCP access", async () => {
+    const { app, store, calls } = make();
+    const { agent, key } = await agentWith(app, ["*"]);
+    expect((await post(app, key, call("search"))).statusCode).toBe(200);
+    const cache = agentCacheFor(store);
+    const stored = await store.getAgent(agent.id);
+    expect(stored).not.toBeNull();
+    cache.remember(hashAgentKey(key), stored, cache.begin());
+    expect(cache.get(hashAgentKey(key), true)?.active).toBe(true);
+    const patch = (active: boolean) => app.inject({ method: "PATCH", url: `/admin/agents/${agent.id}`,
+      headers: adminHeaders, payload: { active } });
+    expect((await patch(false)).statusCode).toBe(200);
+    expect(cache.get(hashAgentKey(key), true)).toBeNull();
+    expect((await post(app, key, call("search"))).statusCode).toBe(403);
+    expect((await patch(true)).statusCode).toBe(200);
+    expect((await post(app, key, call("search"))).json()).toEqual(ok);
+    expect(calls).toHaveLength(2);
+    expect((await proxyLedger(store)).map((row) => row.reason)).toEqual([null, "agent_disabled", null]);
+  });
+});
 
 describe("mcp: allowed tools", () => {
   it.each([["exact", ["gh/search"]], ["server wildcard", ["gh/*"]], ["global wildcard", ["*"]]])("%s -> relayed and logged", async (_n, tools) => {
