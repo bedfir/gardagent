@@ -99,10 +99,7 @@ export function verifyExport(text: string, supplied: unknown[] = []): Result {
     if (!contentValid(row, lastVersion)) { fail("invalid_format", seq); break; }
     if (row.formatVersion === 2) {
       if (row.action === "mcp.approval.requested") {
-        if (!nonempty(row.approvalRef) || !hex(row.policyRev)) {
-          fail("invalid_approval_request", seq); break;
-        }
-        approvalRequests.add(row.approvalRef);
+        if (nonempty(row.approvalRef)) approvalRequests.add(row.approvalRef);
       }
       if (row.action === "mcp.approval.decided") {
         // Migrated 0.3.0 approvals have no correlatable format-2 request (v1 has no

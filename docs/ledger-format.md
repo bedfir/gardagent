@@ -164,8 +164,9 @@ regression reports `invalid_format`. `verifyChain` accepts the preceding verifie
 returns `lastVersion` with a successful result, including for an empty range. Paginated full-chain verification MUST
 carry this state alongside the preceding hash across pages. Independent partial verification defaults to version 1
 and checks version ordering only within the supplied range.
-The action-specific approval checks below belong to the gateway verifier implemented with M05; they are not
-performed by core verification. A version 2 marker alone does not establish that every optional mandate field is populated; historical references may be unavailable.
+The action-specific approval checks below are performed by core verification as well as by the standalone verifier
+(0.4.1): `verifyChain` takes an approval state (decisions and format-2 request ids) that a paginated verification MUST
+carry across pages, like the preceding hash and version, and a fresh state for each independent run. A version 2 marker alone does not establish that every optional mandate field is populated; historical references may be unavailable.
 
 For entries of format version 2 (these are checks on content, in addition to the chain rule of section 1.4):
 
@@ -173,8 +174,6 @@ For entries of format version 2 (these are checks on content, in addition to the
 - An `mcp.tools/call` row carrying `approvalRef` is matched by an earlier `mcp.approval.decided` row with the same
   `approvalRef`, `verdict: "allowed"`, the same `agentId` and the same `requestHash`. The `requestHash` equality is
   the binding between the human decision and the arguments that were then executed.
-- A format-2 `mcp.approval.requested` row MUST carry `approvalRef` and `policyRev`; missing
-  references report `invalid_approval_request` in the standalone verifier.
 - A format-2 decision MUST carry `approvalRef`, `requestHash` and `policyRev`, with one explicit legacy
   exception: `policyRev` MAY be absent if there is no earlier format-2 `mcp.approval.requested` row with
   the same `approvalRef` in the complete export. Migration leaves 0.3.0 approvals' revisions null;

@@ -13,7 +13,9 @@ describe("SSE framing", () => {
       const events = [...splitter.push(stream.slice(0, split)), ...splitter.push(stream.slice(split))];
       const rest = splitter.flush();
       if (rest) events.push(rest);
-      expect(events).toEqual([event, event]);
+      // An LF that follows a chunk-final CR is folded into that CRLF, so compare modulo line-ending bytes.
+      const normalize = (text: string) => text.replace(/\r\n|\r|\n/g, "\n");
+      expect(events.map(normalize)).toEqual([event, event].map(normalize));
       expect(parseSseData(events[0]!)).toEqual(message);
     }
     expect(parseSseData(`:comment${ending}${data}${ending}${ending}`)).toEqual(message);
@@ -26,7 +28,8 @@ describe("SSE framing", () => {
     const events = Array.from(`\uFEFF${first}${second}`).flatMap((chunk) => splitter.push(chunk));
     const rest = splitter.flush();
     if (rest) events.push(rest);
-    expect(events).toEqual([first, second]);
+    const normalize = (text: string) => text.replace(/\r\n|\r|\n/g, "\n");
+    expect(events.map(normalize)).toEqual([first, second].map(normalize));
     expect(events.map(parseSseData)).toEqual([message, message]);
     expect(parseSseData(`\uFEFF${data}\r\r`)).toEqual(message);
   });
@@ -35,7 +38,16 @@ describe("SSE framing", () => {
     const splitter = new SseSplitter();
     expect(splitter.push(`${data}\r`)).toEqual([]);
     expect(splitter.push("\n")).toEqual([]);
-    expect(splitter.push("\n")).toEqual([`${data}\r\n\n`]);
+    expect(splitter.push("\n")).toEqual([`${data}\r\n`]);
+    expect(splitter.flush()).toBe("");
+  });
+
+  it("dispatches a complete CR-terminated event at once, without waiting for the next chunk or the end of the stream", () => {
+    const splitter = new SseSplitter();
+    expect(splitter.push(`${data}\r\r`)).toEqual([`${data}\r\r`]);
+    // The LF of a CRLF split after the final CR is swallowed and does not open an empty event.
+    expect(splitter.push(`\n${data}\r\r`)).toEqual([`${data}\r\r`]);
+    expect(splitter.push("\n")).toEqual([]);
     expect(splitter.flush()).toBe("");
   });
 

@@ -4,11 +4,17 @@ export class SseSplitter {
   private cursor = 0;
   private lineStart = 0;
   private atStart = true;
+  /** A CR ended the previous chunk: a leading LF of the next chunk belongs to the same CRLF terminator. */
+  private skipLf = false;
 
   push(chunk: string): string[] {
     if (this.atStart && chunk.length > 0) {
       this.atStart = false;
       if (chunk.startsWith("\uFEFF")) chunk = chunk.slice(1);
+    }
+    if (this.skipLf && chunk.length > 0) {
+      this.skipLf = false;
+      if (chunk.startsWith("\n")) chunk = chunk.slice(1);
     }
     this.buffer += chunk;
     const events: string[] = [];
@@ -18,8 +24,9 @@ export class SseSplitter {
         this.cursor++;
         continue;
       }
-      // Wait for the next chunk before deciding whether a trailing CR is CRLF.
-      if (char === "\r" && this.cursor + 1 === this.buffer.length) break;
+      // A CR is a complete terminator at once (the event must not wait for the next chunk); if it ends the chunk,
+      // an LF starting the next chunk is dropped so that CRLF still counts as one terminator.
+      if (char === "\r" && this.cursor + 1 === this.buffer.length) this.skipLf = true;
       const blank = this.cursor === this.lineStart;
       this.cursor += char === "\r" && this.buffer[this.cursor + 1] === "\n" ? 2 : 1;
       if (blank) {
@@ -32,8 +39,9 @@ export class SseSplitter {
     return events;
   }
 
-  /** Unfinished remainder, including a possible final CR, at stream end. */
+  /** Unfinished remainder at stream end. */
   flush(): string {
+    this.skipLf = false;
     const rest = this.buffer;
     this.buffer = "";
     this.cursor = 0;

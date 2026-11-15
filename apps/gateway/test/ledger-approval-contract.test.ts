@@ -11,8 +11,10 @@ const base: LedgerInput = {
   formatVersion: 2, approvalRef: "approval-1", policyRev: "b".repeat(64), operatorId: "operator-1",
 };
 const call: LedgerInput = { ...base, action: "mcp.tools/call" };
+
 const { operatorId: _operator, ...expiry } = base;
 const { policyRev: _policy, ...legacyDecision } = base;
+const request: LedgerInput = { ...expiry, action: "mcp.approval.requested" };
 const cases: { name: string; inputs: LedgerInput[]; problem: string | null }[] = [
   { name: "missing prior decision", inputs: [call], problem: "approval_mismatch" },
   { name: "different arguments", inputs: [base, { ...call, requestHash: "c".repeat(64) }], problem: "approval_mismatch" },
@@ -24,7 +26,12 @@ const cases: { name: string; inputs: LedgerInput[]; problem: string | null }[] =
   { name: "latest decision denied", inputs: [base, { ...base, verdict: "denied" }, call], problem: "approval_mismatch" },
   { name: "invalid expiry operator", inputs: [{ ...base, reason: "expired", verdict: "denied" }], problem: "invalid_approval_decision" },
   { name: "valid automatic expiry", inputs: [{ ...expiry, reason: "expired", verdict: "denied" }], problem: null },
-  { name: "decision without policy revision", inputs: [legacyDecision], problem: "invalid_approval_decision" },
+  // Legacy exception: a migrated 0.3.0 approval has no format-2 request row, so its decision may omit policyRev.
+  { name: "legacy decision without request or policy revision", inputs: [legacyDecision], problem: null },
+  { name: "legacy decision then call", inputs: [legacyDecision, call], problem: null },
+  { name: "decision without policy revision after a format-2 request", inputs: [request, legacyDecision], problem: "invalid_approval_decision" },
+  { name: "decision with policy revision after a format-2 request", inputs: [request, base, call], problem: null },
+  { name: "malformed policy revision is never legacy", inputs: [{ ...base, policyRev: "xyz" }], problem: "invalid_format" },
 ];
 
 describe("approval correlation contract: core, standalone and gateway", () => {
