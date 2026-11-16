@@ -164,6 +164,23 @@ export function buildApp(deps: AppDeps): FastifyInstance {
 
   const consoleDir = deps.consoleDir === undefined ? process.env.GARDAGENT_CONSOLE_DIR : deps.consoleDir;
   if (consoleDir && existsSync(consoleDir)) {
+    app.addHook("onSend", async (request, reply, payload) => {
+      // Match the path the way the router does: it percent-decodes before matching (/%63onsole reaches /console).
+      let path = request.url.split("?")[0]!;
+      try {
+        path = decodeURIComponent(path);
+      } catch {
+        // Malformed escape: the router answers 4xx/404, keep the raw path.
+      }
+      if (path === "/console" || path.startsWith("/console/")) {
+        // Vue templates use inline styles for budget bars, chart swatches and policy revision wrapping.
+        reply.header("Content-Security-Policy", "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'");
+        reply.header("X-Content-Type-Options", "nosniff");
+        reply.header("Referrer-Policy", "no-referrer");
+        reply.header("X-Frame-Options", "DENY");
+      }
+      return payload;
+    });
     app.register(fastifyStatic, { root: resolve(consoleDir), prefix: "/console/" });
     app.get("/console", async (_request, reply) => reply.redirect("/console/"));
   }
