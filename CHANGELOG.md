@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- Content-Security-Policy and basic hardening headers for the admin console and its assets, scoped to console paths without applying the console CSP to API responses.
+
 ## [0.4.1] - 2026-11-15
 
 Correctness and security fixes only, found by an independent read-only review of the 0.4.0 tag. No schema change and no change to the ledger format or to any stored hash: upgrading from 0.4.0 needs no migration. Read the first two entries and the [security advisory](SECURITY.md#security-advisories) if you run 0.4.0 or earlier with MCP servers in enforce mode.

@@ -132,6 +132,8 @@ The gateway serves an admin console (Vue 3) at **`/console/`**: with Docker, ope
 
 The console is served only if the built folder exists (variable `GARDAGENT_CONSOLE_DIR`, set in the Docker image).
 
+Console responses carry `Content-Security-Policy: default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'`, plus `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer` and `X-Frame-Options: DENY`. Inline styles support Vue budget bars, chart swatches and policy revision wrapping; scripts and API connections stay same-origin. These headers are scoped to `/console` and `/console/*`; API responses receive no console CSP.
+
 ### Console language
 
 The console is available in French and English. The `FR | EN` switch in the header (and on the login screen) changes the language at once and the choice is kept in the browser (`localStorage`, key `gardagent.console.locale`). Without a saved choice, the browser language decides: French if it starts with `fr` or is missing, English otherwise. Texts come from `apps/console/src/i18n/fr.ts` and `en.ts`, which must have the same keys (checked by `vue-tsc` and by a test); data returned by the gateway (agent names, models, ledger values) is never translated. To add a string, add the key to `fr.ts` first, then to `en.ts`.

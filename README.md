@@ -230,7 +230,7 @@ To report a vulnerability, see [SECURITY.md](SECURITY.md).
   price of ordinary input tokens.
 - During a database outage, refusals that need the database leave no ledger row, and in `fail-open` mode the daily cap is
   not enforced.
-- The admin console has no Content-Security-Policy header, and its default language follows the browser (French or English).
+- The admin console's default language follows the browser (French or English).
 - `docker-compose.tailscale.yml` (private access through Tailscale) has not been tested.
 - Gardagent has not been used in production by the maintainers; see Status.
 
