@@ -156,6 +156,8 @@ export interface GatewayConfig {
   approvalTimeoutMs: number;
   /** Fallback store polling interval (decision coming from another instance); defaults to 2000. */
   approvalPollMs?: number;
+  /** Additional case-insensitive key substrings to redact from approval summaries. */
+  redactKeys?: string[];
   /** Append-only JSON Lines file receiving ledger rows the database could not take (GARDAGENT_LEDGER_SPOOL). */
   ledgerSpoolPath?: string;
   /** GARDAGENT_DB_OUTAGE. Only honored in observe mode (see failOpenActive). Default fail-closed. */
@@ -235,6 +237,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): GatewayConfig 
     upstreamTimeoutMs: Number(env.UPSTREAM_TIMEOUT_MS ?? 120_000),
     defaultMaxOutputTokens: Number(env.GARDAGENT_DEFAULT_MAX_OUTPUT_TOKENS ?? 1024),
     approvalTimeoutMs: Number(env.GARDAGENT_APPROVAL_TIMEOUT_MS ?? 120_000),
+    redactKeys: [...new Set((env.GARDAGENT_REDACT_KEYS ?? "").split(",").map((key) => key.trim().toLowerCase()).filter(Boolean))],
     ledgerSpoolPath: env.GARDAGENT_LEDGER_SPOOL || "/app/spool/ledger.jsonl",
     dbOutage: parseDbOutage(env.GARDAGENT_DB_OUTAGE),
     spoolMaxBytes: parseSpoolMaxBytes(env.GARDAGENT_SPOOL_MAX_BYTES),

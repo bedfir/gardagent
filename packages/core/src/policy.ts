@@ -1,3 +1,4 @@
+import { looksLikeAgentKey } from "./keys.js";
 import type { Agent, MicroUsd } from "./types.js";
 
 export type Decision =
@@ -51,8 +52,58 @@ export function toolAllowed(agent: Agent, server: string, tool: string): boolean
   return toolMatches(agent.allowedTools, server, tool);
 }
 
-/** Human-readable summary of a tool call's arguments: short keys and values, strings truncated, 500 characters max. */
-export function summarizeArgs(args: unknown, max = 500): string {
+const REDACT_KEYS = [
+  "password", "passwd", "secret", "token", "api_key", "apikey", "authorization",
+  "cookie", "credential", "private_key", "access_key", "session",
+];
+
+/** Sanitize the complete value before any summary truncation; never mutate the call arguments. */
+function redactArgs(args: unknown, extraKeys: readonly string[]): unknown {
+  const keys = [...REDACT_KEYS, ...extraKeys.map((key) => key.trim().toLowerCase()).filter(Boolean)];
+  const seen = new WeakSet<object>();
+  const visit = (value: unknown): unknown => {
+    if (typeof value === "string") {
+      // Userinfo is the only secret for which we retain the surrounding string.
+      // Authority ends at /, ? or #. Literal @ characters before its last @
+      // belong to userinfo; percent-encoded separators remain part of that field.
+      // WHATWG URL parsing strips ASCII tabs/newlines anywhere and trims C0/space.
+      // Inspect that normalized candidate before extracting an authority.
+      // Spaces do not end the authority: URL parsers accept and percent-encode them in userinfo.
+      // Prose after a path-less URL may be over-redacted; that is preferred to a leak.
+      const normalized = value.replace(/[\t\n\r]/g, "").replace(/^[\x00-\x20]+|[\x00-\x20]+$/g, "");
+      let hasUserinfo = false;
+      const redactedUrl = normalized.replace(/([a-z][a-z0-9+.-]*:\/\/)([^/?#]*)/gi, (_url, scheme: string, authority: string) => {
+        const separator = authority.lastIndexOf("@");
+        if (separator < 0) return scheme + authority;
+        hasUserinfo = true;
+        return `${scheme}[redacted]@${authority.slice(separator + 1)}`;
+      });
+      const sanitized = hasUserinfo ? redactedUrl : value;
+      // JWT segment lengths vary, and alg none permits an empty signature.
+      // Prefer redacting JWT lookalikes over leaking a token.
+      // Bound both sides so ordinary identifiers cannot contain a matching key.
+      // Provider keys have substantial bodies; short prefix lookalikes stay visible.
+      const knownSecret = /(?<![a-zA-Z0-9_-])(?:sk-(?:ant-)?[a-zA-Z0-9_-]{20,}|(?:ghp_|gho_)[a-zA-Z0-9]{36}|github_pat_[a-zA-Z0-9]{22}_[a-zA-Z0-9]{59}|AKIA[0-9A-Z]{16}|xox[abpr]-[0-9]{10,13}-[0-9]{10,13}(?:-[0-9]{10,13})?-[a-zA-Z0-9]{20,}|eyJ[a-zA-Z0-9_-]*\.[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]*|-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY-----)(?![a-zA-Z0-9_-])/;
+      const agentKeys = sanitized.match(/(?<![a-zA-Z0-9_-])ga_[a-zA-Z0-9_-]{32}(?![a-zA-Z0-9_-])/g) ?? [];
+      if (knownSecret.test(sanitized) || agentKeys.some(looksLikeAgentKey)) return "[redacted]";
+      return sanitized;
+    }
+    if (value === null || typeof value !== "object") return value;
+    if (seen.has(value)) return "…";
+    seen.add(value);
+    const result: unknown = Array.isArray(value)
+      ? value.map(visit)
+      : Object.fromEntries(Object.entries(value).map(([key, child]) => [
+          key, keys.some((part) => key.toLowerCase().includes(part)) ? "[redacted]" : visit(child),
+        ]));
+    seen.delete(value);
+    return result;
+  };
+  return visit(args);
+}
+
+/** Human-readable, redacted tool arguments; strings truncated, 500 characters max by default. */
+export function summarizeArgs(args: unknown, max = 500, extraKeys: readonly string[] = []): string {
   const cut = (s: string, n: number) => (s.length > n ? `${s.slice(0, n - 1)}…` : s);
   const value = (v: unknown): string => {
     if (typeof v === "string") return JSON.stringify(cut(v, 80));
@@ -64,6 +115,7 @@ export function summarizeArgs(args: unknown, max = 500): string {
     }
   };
   if (args === undefined || args === null) return "";
+  args = redactArgs(args, extraKeys);
   const text =
     typeof args === "object" && !Array.isArray(args)
       ? Object.entries(args as Record<string, unknown>)
