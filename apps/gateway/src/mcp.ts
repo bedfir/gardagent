@@ -191,7 +191,7 @@ export function registerMcp(app: FastifyInstance, deps: McpDeps): void {
         server: serverName,
         tool,
         argsHash: ctxBase.requestHash,
-        argsSummary: summarizeArgs(toolArgs),
+        argsSummary: summarizeArgs(toolArgs, 500, config.redactKeys),
         status: "pending",
         decidedAt: null,
         reason: null,

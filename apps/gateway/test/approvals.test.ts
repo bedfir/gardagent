@@ -1,10 +1,31 @@
 import { describe, expect, it } from "vitest";
 import { canonicalJson, sha256, summarizeArgs, verifyChain } from "@gardagent/core";
+import { loadConfig } from "../src/config.js";
 import { adminHeaders, nextPending, createAgent, jsonResponse, setupWith } from "./helpers.js";
 
 const servers = { gh: { url: "https://mcp.test/gh", headers: {} } };
 const mixedServers = { erp: { url: "https://mcp.test/erp", headers: {}, readTools: ["read_work_order"] } };
 const ok = { jsonrpc: "2.0", id: 1, result: { content: [{ type: "text", text: "ok" }] } };
+const normalizedUserinfoUrls = [
+  ...["\t", "\n", "\r"].flatMap((control) => [
+    `https://al${control}ice:pass@example.com/path`,
+    `https://alice:pa${control}ss@example.com/path`,
+    `https://alice${control}:pass@example.com/path`,
+    `https://al${control}ice:pa${control}ss@pri${control}vate@example.com/path`,
+  ]),
+  "\x00\x1f https://alice:pass@example.com/path \x1f\x00",
+  "\t\n https://al\rice:pa\tss@private@example.com/path \r\n",
+  "https://alice:pa ss@example.com/path",
+  "https://al ice:pass@example.com/path",
+  "https://alice:pa ss@pri vate@example.com/path",
+  "https://alice:p a\ts s@example.com/path",
+];
+const shortJwts = [
+  "eyJhbGciOiJIUzI1NiJ9.e30." + "a".repeat(43), // {} claims
+  "eyJhIjowfQ.e30.a", // {"a":0} header, {} payload and short signature
+  "eyJ.a.b", // no minimum beyond the required header prefix
+  "eyJhbGciOiJub25lIn0.e30.", // alg none
+];
 const call = (name: string, args: unknown = { path: "/secret-chemin", token: "mot-sensible" }) => ({
   jsonrpc: "2.0",
   id: 1,
@@ -30,6 +51,73 @@ const ledgerActions = async (store: Ctx["store"]) =>
   (await store.listLedger()).filter((e) => !e.action.startsWith("admin.")).map((e) => `${e.action}:${e.verdict}:${e.reason}`);
 
 describe("human validation: MCP tools", () => {
+  it.each(["approve", "reject"] as const)("%s sanitizes summaries, fingerprints full arguments and preserves forwarding", async (action) => {
+    const base = { UPSTREAM_BASE_URL: "https://up.test", UPSTREAM_API_KEY: "test", GARDAGENT_ADMIN_TOKEN: "t".repeat(32) };
+    const configured = loadConfig({ ...base, GARDAGENT_REDACT_KEYS: " , CustomerCode, CUSTOMERcode, " });
+    expect(configured.redactKeys).toEqual(["customercode"]);
+    expect(loadConfig(base).redactKeys).toEqual([]);
+    const { app, store, calls } = make({ redactKeys: configured.redactKeys });
+    const { key } = await agentWith(app, ["gh/*"]);
+    const args = { path: "/visible", password: "synthetic-password", customerCode: "synthetic-custom", nested: ["ghp_SSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSS"] };
+    const pending = post(app, key, call("delete", args)).then((response) => response);
+    const approval = await nextPending(store);
+    expect(approval.argsSummary).toContain('/visible');
+    expect(approval.argsSummary).toContain('[redacted]');
+    for (const secret of [args.password, args.customerCode, args.nested[0]]) expect(approval.argsSummary).not.toContain(secret);
+    expect(approval.argsHash).toBe(sha256(canonicalJson(args)));
+    expect(approval.argsHash).not.toBe(sha256(canonicalJson({ ...args, password: "different" })));
+    const listed = await app.inject({ method: "GET", url: "/admin/approvals", headers: adminHeaders });
+    expect(listed.json().approvals[0].argsSummary).toBe(approval.argsSummary);
+    const decision = await decide(app, approval.id, action);
+    expect(decision.statusCode).toBe(200);
+    expect(decision.body).not.toContain(args.password);
+    const response = await pending;
+    if (action === "approve") {
+      expect(response.json()).toEqual(ok);
+      expect(calls[0]!.body.params.arguments).toEqual(args);
+    } else {
+      expect(response.json().error.code).toBe(-32002);
+      expect(calls).toHaveLength(0);
+    }
+    const rows = await store.listLedger();
+    expect(verifyChain(rows).valid).toBe(true);
+    const serialized = JSON.stringify(rows);
+    for (const secret of [args.password, args.customerCode, args.nested[0]]) expect(serialized).not.toContain(secret);
+    const expectedActions = action === "approve"
+      ? ["mcp.approval.requested", "mcp.approval.decided", "mcp.tools/call"]
+      : ["mcp.approval.requested", "mcp.approval.decided"];
+    const argumentRows = rows.filter((row) => expectedActions.includes(row.action));
+    expect(argumentRows.map((row) => row.action).sort()).toEqual([...expectedActions].sort());
+    for (const row of argumentRows) expect(row.requestHash).toBe(sha256(canonicalJson(args)));
+    // A second request has its own approval and hash; this does not test approval reuse.
+    const secondRequest = post(app, key, call("delete", { ...args, password: "different" })).then((response) => response);
+    const next = await nextPending(store);
+    expect(next.id).not.toBe(approval.id);
+    expect(next.argsSummary).toBe(approval.argsSummary);
+    expect(next.argsHash).not.toBe(approval.argsHash);
+    await decide(app, next.id, "reject");
+    await secondRequest;
+  });
+
+  it.each([
+    ...normalizedUserinfoUrls.map((url) => ({ args: { value: url }, expected: 'value="https://[redacted]@example.com/path"' })),
+    ...shortJwts.map((jwt) => ({ args: { value: `before ${jwt} after` }, expected: 'value="[redacted]"' })),
+  ])("stores and returns sanitized MCP summaries: $args.value", async ({ args, expected }) => {
+    const { app, store, calls } = make();
+    const { key } = await agentWith(app, ["gh/*"]);
+    const pending = post(app, key, call("delete", args)).then((response) => response);
+    const approval = await nextPending(store);
+    expect(approval.argsSummary).toBe(expected);
+    expect((await store.getApproval(approval.id))!.argsSummary).toBe(expected);
+    expect(approval.argsHash).toBe(sha256(canonicalJson(args)));
+    const listed = await app.inject({ method: "GET", url: "/admin/approvals", headers: adminHeaders });
+    expect(listed.statusCode).toBe(200);
+    expect(listed.json().approvals[0].argsSummary).toBe(expected);
+    await decide(app, approval.id, "approve");
+    expect((await pending).json()).toEqual(ok);
+    expect(calls[0]!.body.params.arguments).toEqual(args);
+  });
+
   it("approved: no call before the decision, then normal relay", async () => {
     const { app, store, calls } = make();
     const { agent, key } = await agentWith(app, ["gh/delete"]);
@@ -173,6 +261,70 @@ describe("human validation: MCP tools", () => {
 });
 
 describe("summarizeArgs", () => {
+  it.each(["password", "passwd", "secret", "token", "api_key", "apikey", "authorization", "cookie", "credential", "private_key", "access_key", "session"])("redacts substring key %s case-insensitively", (key) => {
+    expect(summarizeArgs({ [`prefix_${key.toUpperCase()}_suffix`]: { value: "synthetic" }, path: "/visible" })).toBe(`prefix_${key.toUpperCase()}_suffix="[redacted]", path="/visible"`);
+  });
+
+  it.each([
+    "sk-" + "a".repeat(20), "sk-ant-" + "a".repeat(40),
+    "ghp_" + "a".repeat(36), "gho_" + "a".repeat(36), "github_pat_" + "a".repeat(22) + "_" + "b".repeat(59),
+    "ga_" + "a".repeat(32), "AKIA" + "A".repeat(16),
+    ...["a", "b", "p", "r"].map((kind) => `xox${kind}-123456789012-123456789012-${"a".repeat(24)}`),
+    ...shortJwts, "eyJx.a.b", "eyJ.not.ajwt",
+    "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0." + "a".repeat(43), "-----BEGIN PRIVATE KEY-----",
+    "-----BEGIN RSA PRIVATE KEY-----", "-----BEGIN EC PRIVATE KEY-----",
+  ])("redacts a secret anywhere in strings: %s", (secret) => {
+    expect(summarizeArgs({ value: `before ${secret} after` })).toBe('value="[redacted]"');
+    expect(summarizeArgs(secret)).toBe('"[redacted]"');
+  });
+
+  it.each([
+    "task-delete", "/workspace/task-123", "disk-image", "risk-assessment", "ask-user",
+    "sk-short", "sk-ant-short", "ghp_short", "gho_short", "github_pat_short", "ga_short",
+    "AKIA123", "xoxb-short", "eyJ..abc", "eyJ.a",
+    ...shortJwts.map((jwt) => `prefix${jwt}`),
+    "ghp_" + "a".repeat(36) + "suffix", "gho_" + "a".repeat(36) + "suffix",
+    "github_pat_" + "a".repeat(22) + "_" + "b".repeat(59) + "suffix",
+    "AKIA" + "A".repeat(16) + "suffix", "ga_" + "a".repeat(32) + "suffix",
+    "prefix-----BEGIN PRIVATE KEY-----", "-----BEGIN PRIVATE KEY-----suffix",
+    ...["sk-" + "a".repeat(20), "ghp_" + "a".repeat(36), "gho_" + "a".repeat(36),
+      "github_pat_" + "a".repeat(22) + "_" + "b".repeat(59), "ga_" + "a".repeat(32),
+      "AKIA" + "A".repeat(16), "xoxb-123456789012-123456789012-" + "a".repeat(24),
+      "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0." + "a".repeat(43)]
+      .map((secret) => `prefix${secret}`),
+  ])("preserves ordinary values and embedded credential-like identifiers: %s", (value) => {
+    expect(summarizeArgs({ value })).not.toContain("[redacted]");
+  });
+
+  it.each([
+    ...normalizedUserinfoUrls.map((url) => [url, "https://[redacted]@example.com/path"]),
+    ["https://alice:public@private@example.com/path", "https://[redacted]@example.com/path"],
+    ["https://alice:p%40ss%3Aword@example.com/path", "https://[redacted]@example.com/path"],
+    ["https://a%40b:public@private@[::1]:8443/path", "https://[redacted]@[::1]:8443/path"],
+    ["https://example.com/path@visible?q=user@visible", "https://example.com/path@visible?q=user@visible"],
+  ])("redacts complete URL authority userinfo: %s", (url, expected) => {
+    expect(summarizeArgs({ url })).toBe(`url=${JSON.stringify(expected)}`);
+  });
+
+  it("walks nested objects and arrays without changing arguments", () => {
+    const args = { group: [{ password: "synthetic", path: "/ok" }, ["ghp_SSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSS", 2]], count: 3 };
+    expect(summarizeArgs(args)).toBe('group=[{"password":"[redacted]","path":"/ok"},["[redacted]",2]], count=3');
+    expect(args.group[0]).toEqual({ password: "synthetic", path: "/ok" });
+  });
+
+  it("redacts URL userinfo while retaining the scheme, host and path", () => {
+    expect(summarizeArgs({ url: "postgres://alice:p%40ss@db.example:5432/data" })).toBe('url="postgres://[redacted]@db.example:5432/data"');
+    expect(summarizeArgs(["https://alice:pass@example.com/path"])).toBe('["https://[redacted]@example.com/path"]');
+  });
+
+  it("adds custom keys without replacing defaults and redacts before truncation", () => {
+    expect(summarizeArgs({ custom: "hidden", password: "hidden", path: "/ok" }, 500, ["CUSTOM"])).toBe('custom="[redacted]", password="[redacted]", path="/ok"');
+    expect(summarizeArgs({ value: "z".repeat(100) + " ghp_SSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSS" })).toBe('value="[redacted]"');
+    expect(summarizeArgs({ password: "z".repeat(300) })).toBe('password="[redacted]"');
+    expect(summarizeArgs({ password: "hidden", path: "z".repeat(300) }, 25)).toHaveLength(25);
+    expect(summarizeArgs("ga_short")).toBe('"ga_short"');
+  });
+
   it("short keys and values, truncated strings, 500 characters max", () => {
     expect(summarizeArgs({ a: 1, b: "x", c: null, d: [1, 2] })).toBe('a=1, b="x", c=null, d=[1,2]');
     expect(summarizeArgs({ long: "z".repeat(300) })).toBe(`long="${"z".repeat(79)}…"`);
