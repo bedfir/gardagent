@@ -31,7 +31,7 @@ interface Entry {
 
 export const AUTH_LIMITER_MAX_ENTRIES = 10_000;
 
-/** Largest body read from a request on /v1 or /mcp that carries no well-formed agent key (it will get a 401 anyway). */
+/** Largest body read from a request on /v1 or /mcp that has no resolved active agent. */
 export const UNAUTHENTICATED_BODY_LIMIT = 64 * 1024;
 
 declare module "fastify" {

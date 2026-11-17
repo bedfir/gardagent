@@ -2,7 +2,7 @@ import type { FastifyInstance, FastifyRequest } from "fastify";
 import type { Store } from "@gardagent/core";
 import type { GatewayConfig } from "./config.js";
 import { anthropicError } from "./errors.js";
-import { AGENT_UNVERIFIABLE_CODE, AGENT_UNVERIFIABLE_MESSAGE, AgentUnverifiableError, bearer, createGovernance, type Usage } from "./shared.js";
+import { AGENT_UNVERIFIABLE_CODE, AGENT_UNVERIFIABLE_MESSAGE, AgentUnverifiableError, createGovernance, type Usage } from "./shared.js";
 import { parseSseData, SseSplitter } from "./sse.js";
 
 const ACTION = "messages";
@@ -44,12 +44,6 @@ class UsageTracker {
   }
 }
 
-function agentKey(request: FastifyRequest): string | null {
-  const header = request.headers["x-api-key"];
-  const value = Array.isArray(header) ? header[0] : header;
-  return value?.trim() || bearer(request);
-}
-
 function headerValue(request: FastifyRequest, name: string): string | undefined {
   const value = request.headers[name];
   return (Array.isArray(value) ? value[0] : value) || undefined;
@@ -62,7 +56,7 @@ export function registerAnthropic(app: FastifyInstance, deps: AnthropicDeps): vo
   app.post("/v1/messages", async (request, reply) => {
     let agent;
     try {
-      agent = await gov.authenticate(ACTION, agentKey(request), request.ip);
+      agent = await gov.authenticateRequest(request);
     } catch (error) {
       if (!(error instanceof AgentUnverifiableError)) throw error;
       return reply.code(503).send(anthropicError("api_error", AGENT_UNVERIFIABLE_MESSAGE, AGENT_UNVERIFIABLE_CODE));

@@ -2,7 +2,7 @@ import type { FastifyInstance } from "fastify";
 import type { Store } from "@gardagent/core";
 import type { GatewayConfig } from "./config.js";
 import { openAiError } from "./errors.js";
-import { AGENT_UNVERIFIABLE_CODE, AGENT_UNVERIFIABLE_MESSAGE, AgentUnverifiableError, bearer, createGovernance, type Usage } from "./shared.js";
+import { AGENT_UNVERIFIABLE_CODE, AGENT_UNVERIFIABLE_MESSAGE, AgentUnverifiableError, createGovernance, type Usage } from "./shared.js";
 import { parseSseData, SseSplitter } from "./sse.js";
 
 const ACTION = "chat.completions";
@@ -29,7 +29,7 @@ export function registerProxy(app: FastifyInstance, deps: ProxyDeps): void {
   app.post("/v1/chat/completions", async (request, reply) => {
     let agent;
     try {
-      agent = await gov.authenticate(ACTION, bearer(request), request.ip);
+      agent = await gov.authenticateRequest(request);
     } catch (error) {
       if (!(error instanceof AgentUnverifiableError)) throw error;
       return reply.code(503).send(openAiError(AGENT_UNVERIFIABLE_MESSAGE, "gardagent_policy", AGENT_UNVERIFIABLE_CODE));

@@ -3,9 +3,10 @@ import { resolve } from "node:path";
 import fastifyStatic from "@fastify/static";
 import { Transform } from "node:stream";
 import Fastify, { type FastifyInstance, type FastifyServerOptions } from "fastify";
-import { looksLikeAgentKey, type Store } from "@gardagent/core";
+import type { Store } from "@gardagent/core";
 import { AuthFailureLimiter, authSummaryRow, UNAUTHENTICATED_BODY_LIMIT } from "./auth-limiter.js";
 import { DEFAULT_AUTH_FAIL_LIMIT, DEFAULT_AUTH_FAIL_WINDOW_MS } from "./config.js";
+import { AgentUnverifiableError, createGovernance } from "./shared.js";
 import { ApprovalHub } from "./approvals.js";
 import { registerAdmin } from "./admin.js";
 import { registerAnthropic } from "./anthropic.js";
@@ -66,16 +67,24 @@ export function buildApp(deps: AppDeps): FastifyInstance {
       return reply.code(429).header("Retry-After", String(wait)).send(r.body);
     }
   });
-  // A request on /v1 or /mcp without a well-formed agent key is going to be refused: do not read more than a small body for it.
+  app.decorateRequest("agentAuthFailureRecorded", false);
+  const auth = createGovernance(app, deps);
+  // Only an active resolved identity may use the global body limit. Large refused requests get 413
+  // for both declared and streamed lengths; small ones retain their endpoint's authentication response.
   app.addHook("preParsing", async (request, _reply, payload) => {
-    const path = request.url.split("?")[0]!;
-    if (!path.startsWith("/v1/") && !path.startsWith("/mcp/")) return payload;
-    const xApiKey = request.headers["x-api-key"];
-    const header = request.headers.authorization;
-    const candidates = [Array.isArray(xApiKey) ? xApiKey[0] : xApiKey, header && header.toLowerCase().startsWith("bearer ") ? header.slice(7).trim() : undefined];
-    if (candidates.some((c) => typeof c === "string" && looksLikeAgentKey(c.trim()))) return payload;
-    const declared = Number(request.headers["content-length"] ?? 0);
-    if (declared > UNAUTHENTICATED_BODY_LIMIT) throw tooLarge(UNAUTHENTICATED_BODY_LIMIT);
+    const path = request.routeOptions.url ?? request.url.split("?")[0]!;
+    if (request.method !== "POST" || (!path.startsWith("/v1/") && !path.startsWith("/mcp/"))) return payload;
+    const declared = request.headers["content-length"];
+    if (declared !== undefined && Number(declared) <= UNAUTHENTICATED_BODY_LIMIT) return payload;
+    try {
+      const agent = await auth.authenticateRequest(request);
+      if (agent?.active) return payload;
+    } catch (error) {
+      if (!(error instanceof AgentUnverifiableError)) throw error;
+      // Unverifiable keys keep the cap. The handler authenticates afresh and supplies its
+      // protocol-specific outage response if the streamed body stays small.
+    }
+    if (Number(declared) > UNAUTHENTICATED_BODY_LIMIT) throw tooLarge(UNAUTHENTICATED_BODY_LIMIT);
     let seen = 0;
     return payload.pipe(
       new Transform({

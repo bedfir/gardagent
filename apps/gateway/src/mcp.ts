@@ -3,7 +3,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { policyRevision, canonicalJson, sha256, summarizeArgs, toolAllowed, toolMatches, toolNameMatches, type Approval, type Store, type ToolAccessClass } from "@gardagent/core";
 import { REQUESTED, type ApprovalHub } from "./approvals.js";
 import type { GatewayConfig } from "./config.js";
-import { AGENT_UNVERIFIABLE_CODE, AGENT_UNVERIFIABLE_MESSAGE, AgentUnverifiableError, bearer, createGovernance } from "./shared.js";
+import { AGENT_UNVERIFIABLE_CODE, AGENT_UNVERIFIABLE_MESSAGE, AgentUnverifiableError, createGovernance } from "./shared.js";
 import { SseSplitter, parseSseData } from "./sse.js";
 
 export const MCP_REQUESTS = ["initialize", "ping", "tools/list", "tools/call"] as const;
@@ -48,7 +48,7 @@ export function registerMcp(app: FastifyInstance, deps: McpDeps): void {
 
     let agent;
     try {
-      agent = await gov.authenticate("mcp", bearer(request), request.ip);
+      agent = await gov.authenticateRequest(request);
     } catch (error) {
       if (!(error instanceof AgentUnverifiableError)) throw error;
       return reply.code(503).send(rpcError(null, -32000, AGENT_UNVERIFIABLE_MESSAGE, { code: AGENT_UNVERIFIABLE_CODE }));

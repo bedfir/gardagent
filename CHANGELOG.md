@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Security
+
+- Gate large declared and chunked POST bodies on /v1/* and /mcp/* by resolving agent keys before parsing; handlers authenticate afresh after parsing to enforce revocation, key rotation and current policy. Small declared bodies and non-POST methods perform no pre-parse lookup. Only active agents retain the 10 MiB limit, including agents verified through the bounded fail-open outage cache. Other bodies over 64 KiB receive the existing 413 body-limit error for both Content-Length and chunked transfers; small bodies keep their existing authentication and outage responses. Authentication failure accounting runs once per request.
+
 ### Added
 
 - Content-Security-Policy and basic hardening headers for the admin console and its assets, scoped to console paths without applying the console CSP to API responses.
