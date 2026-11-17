@@ -1,3 +1,4 @@
+import { Readable } from "node:stream";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -97,6 +98,30 @@ describe("agent unverifiable during an outage", () => {
     expect((await chat(app, key)).statusCode).toBe(200); // a cached agent is still served
   });
 
+  it("resolves a cached active agent before accepting a large outage body, without retrying lookup", async () => {
+    const { app, store } = setup();
+    try {
+      const { key } = await createAgent(app, { name: "bot", allowedModels: ["*"], dailyBudgetUsd: 1 });
+      expect((await chat(app, key)).statusCode).toBe(200);
+      store.down = true;
+      const lookup = vi.spyOn(store, "findAgentByKeyHash");
+      const response = await app.inject({
+        method: "POST", url: "/v1/chat/completions",
+        headers: { authorization: `Bearer ${key}` },
+        payload: { model: "gpt-4o-mini", messages: [{ role: "user", content: "x".repeat(1024 * 1024) }] },
+      });
+      expect(response.statusCode).toBe(200);
+      expect(lookup).toHaveBeenCalledTimes(1);
+      lookup.mockClear();
+      const uncached = await chat(app, UNKNOWN);
+      expect(uncached.statusCode).toBe(503);
+      expect(uncached.json().error.code).toBe(CODE);
+      expect(lookup).not.toHaveBeenCalled(); // the established outage uses only the bounded cache
+    } finally {
+      await app.close();
+    }
+  });
+
   it("Anthropic format: 503 with the code in its own error shape", async () => {
     const { app, store } = setup();
     const { key } = await createAgent(app, { name: "bot", allowedModels: ["*"], dailyBudgetUsd: 1 });
@@ -123,6 +148,23 @@ describe("agent unverifiable during an outage", () => {
     });
     void key;
   });
+
+  for (const url of ["/v1/chat/completions", "/v1/messages", "/mcp/gh"]) {
+    it(`keeps the small chunked outage response after an unverifiable gate on ${url}`, async () => {
+      const { app, store } = setup();
+      try {
+        store.down = true;
+        const response = await app.inject({ method: "POST", url, headers: {
+          authorization: `Bearer ${UNKNOWN}`, "content-type": "application/json", "transfer-encoding": "chunked",
+        }, payload: Readable.from(['{}']) });
+        expect(response.statusCode).toBe(503);
+        const body = response.json();
+        expect(url.startsWith("/mcp/") ? body.error.data.code : body.error.code).toBe(CODE);
+      } finally {
+        await app.close();
+      }
+    });
+  }
 
   it("an agent whose cache entry is older than TTL + grace is unverifiable too", async () => {
     // The cache captures Date.now when the app is built: install the skewed clock first.

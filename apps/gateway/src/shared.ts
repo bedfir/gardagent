@@ -119,6 +119,22 @@ export function bearer(request: FastifyRequest): string | null {
   return header.slice(7).trim();
 }
 
+/** Anthropic prefers x-api-key; other agent endpoints accept only Bearer. */
+function requestAgentKey(request: FastifyRequest): string | null {
+  if (request.routeOptions.url === "/v1/messages") {
+    const header = request.headers["x-api-key"];
+    const value = Array.isArray(header) ? header[0] : header;
+    return value?.trim() || bearer(request);
+  }
+  return bearer(request);
+}
+
+declare module "fastify" {
+  interface FastifyRequest {
+    agentAuthFailureRecorded: boolean;
+  }
+}
+
 /**
  * Governance logic shared by all endpoints: agent identity, rules, budget,
  * ledger writing, timeout and abort. Endpoints keep only their own protocol format.
@@ -185,7 +201,7 @@ export function createGovernance(app: FastifyInstance, deps: { config: GatewayCo
   }
 
   /** Finds the agent for a key; logs the denial (invalid_key) if the key is missing or unknown. Throws AgentUnverifiableError (see above). */
-  async function authenticate(action: string, key: string | null, sourceIp = "unknown"): Promise<Agent | null> {
+  async function authenticate(action: string, key: string | null, sourceIp = "unknown", failureRecorded = false, onFailureRecorded?: () => void): Promise<Agent | null> {
     let agent: Agent | null = null;
     if (key && looksLikeAgentKey(key)) {
       const hash = hashAgentKey(key);
@@ -208,10 +224,11 @@ export function createGovernance(app: FastifyInstance, deps: { config: GatewayCo
         if (guard.failOpen) cache.remember(hash, agent, token);
       }
     }
-    if (!agent) {
+    if (!agent && !failureRecorded) {
       // One `invalid_key` row per source address and window, the rest aggregated (see AuthFailureLimiter).
       const limiter = app.agentAuthLimiter;
       const { first } = limiter.recordFailure(sourceIp);
+      onFailureRecorded?.();
       for (const n of limiter.drain()) await record(authSummaryRow(n));
       if (first) await record({
         agentId: null,
@@ -227,6 +244,19 @@ export function createGovernance(app: FastifyInstance, deps: { config: GatewayCo
         responseHash: null,
       });
     }
+    return agent;
+  }
+
+  /** Always resolve afresh: a slow upload must not preserve revoked credentials or stale policy.
+   * Small declared bodies make one lookup; large valid bodies make two (gate, then handler).
+   * Only failure accounting is shared with the gate, never an identity or an outage outcome.
+   */
+  async function authenticateRequest(request: FastifyRequest): Promise<Agent | null> {
+    const route = request.routeOptions.url ?? request.url.split("?")[0]!;
+    const action = route.startsWith("/mcp/") ? "mcp" : route === "/v1/messages" ? "messages" : "chat.completions";
+    const agent = await authenticate(action, requestAgentKey(request), request.ip, request.agentAuthFailureRecorded, () => {
+      request.agentAuthFailureRecorded = true;
+    });
     return agent;
   }
 
@@ -422,5 +452,5 @@ export function createGovernance(app: FastifyInstance, deps: { config: GatewayCo
     return out;
   }
 
-  return { rateLimit, upstreamHeaders, record, ledgerReady, degraded, authenticate, admit, startCall, recordUnreachable, settle };
+  return { rateLimit, upstreamHeaders, record, ledgerReady, degraded, authenticate, authenticateRequest, admit, startCall, recordUnreachable, settle };
 }
